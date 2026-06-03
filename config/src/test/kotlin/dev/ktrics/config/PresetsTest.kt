@@ -1,0 +1,40 @@
+package dev.ktrics.config
+
+import io.kotest.matchers.collections.shouldContainAll
+import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.Test
+
+/** Framework presets expand to keep-alive annotations; unknown presets are silently ignored. */
+class PresetsTest {
+    @Test
+    fun `a known preset expands to its annotation set`() {
+        val keep = Presets.keepAliveAnnotations(listOf("spring"), emptyList())
+        keep shouldContainAll listOf("Component", "Service", "Repository", "Bean")
+    }
+
+    @Test
+    fun `multiple presets union, plus the explicit list, deduplicated`() {
+        val keep = Presets.keepAliveAnnotations(listOf("lombok", "jpa"), listOf("Keep", "Data"))
+        keep shouldContainAll listOf("Builder", "Entity", "Keep")
+        // "Data" is both a lombok annotation and an explicit entry; the set carries it once.
+        keep.count { it == "Data" } shouldBe 1
+    }
+
+    @Test
+    fun `an unknown preset contributes nothing and does not throw`() {
+        val keep = Presets.keepAliveAnnotations(listOf("made-up", "spring"), emptyList())
+        keep shouldContainAll listOf("Component")
+        keep.contains("made-up") shouldBe false
+    }
+
+    @Test
+    fun `no presets and no explicit list yields an empty set`() {
+        Presets.keepAliveAnnotations(emptyList(), emptyList()) shouldBe emptySet()
+    }
+
+    @Test
+    fun `known lists exactly the registered preset names`() {
+        Presets.known() shouldContainAll listOf("lombok", "jpa", "spring", "compose", "dagger")
+        Presets.known().contains("not-a-preset") shouldBe false
+    }
+}
