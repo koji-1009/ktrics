@@ -1,0 +1,55 @@
+# detekt overrides, merged over the default config (buildUponDefaultConfig = true).
+# Each relaxation encodes a DELIBERATE project convention, not a lowered bar; genuine smells
+# (generic exceptions, dead code, naming clashes) stay enabled and are fixed in code.
+
+complexity:
+  LongParameterList:
+    # IR carriers (SourceUnit, TypeDecl, FunctionDecl, Violation, ...) and the unused-detector's declOf
+    # builder are wide data-shaping signatures by nature.
+    functionThreshold: 12
+    constructorThreshold: 14
+    ignoreDefaultParameters: true
+    ignoreDataClasses: true
+  TooManyFunctions:
+    # The NodeClassifier contract has ~20 members; its impls implement all of them. Topic files group
+    # related declarations.
+    thresholdInClasses: 25
+    thresholdInFiles: 25
+    thresholdInInterfaces: 25
+    thresholdInObjects: 25
+  NestedBlockDepth:
+    # Parsers and tree walks (JaCoCo XML, the call graph, comment scanning) nest inherently.
+    threshold: 7
+
+style:
+  LoopWithTooManyJumpStatements:
+    # Guard-heavy parse/walk loops use a couple of break/continue.
+    maxJumpCount: 3
+  MaxLineLength:
+    # Aligned with ktlint's 140 (the project's enforced limit) instead of detekt's stricter 120.
+    # Comment statements are excluded to match ktlint, which does not wrap an unsplittable dogfood
+    # dismiss-directive comment.
+    maxLineLength: 140
+    excludeCommentStatements: true
+  ReturnCount:
+    # The codebase favours guard clauses / early returns over single-exit.
+    max: 6
+  MagicNumber:
+    # DISABLED deliberately, consistent with the ktlint house-style decisions. The residual literals
+    # after the lenient options below are domain/formatting/glue constants where an inline value is
+    # idiomatic and a name adds little: published Halstead/MI formula coefficients, sha-256 prefix
+    # lengths, ms<->ns/seconds unit conversions, padding widths, and regression heuristic factors.
+    # MagicNumber is among detekt's most-contested rules and this project never adopted it; correctness
+    # smells are covered by other (enabled) rules.
+    active: false
+
+naming:
+  # Files named by topic rather than by their single top-level declaration (Catalog.kt -> BuiltinMetrics,
+  # Version.kt, Spans.kt, ...) — the same convention ktlint's `filename` rule is disabled for.
+  MatchingDeclarationName:
+    active: false
+
+empty-blocks:
+  EmptyFunctionBlock:
+    # No-op overrides (e.g. a CommandSink that discards output in tests) are intentional.
+    ignoreOverridden: true

@@ -1,0 +1,92 @@
+# ktrics version catalog.
+#
+# Kotlin and the Analysis API Standalone are PINNED and upgrade-gated (plan §2, §10, §13):
+# the Analysis API Standalone is version-locked to the Kotlin release and published in a
+# JetBrains repo with occasional availability gaps. A Kotlin bump must pass the CI resolution
+# corpus before it lands. Do not float these versions.
+[versions]
+kotlin = "2.1.20"
+# The Analysis API Standalone artifacts are published in lockstep with the Kotlin release.
+# They share the Kotlin version coordinate but live under the analysis-api artifact ids below.
+# Pinned to a coordinated, fully-published release (2.1.0 was an incomplete early publish).
+analysisApi = "2.1.20"
+intellij = "243.21565.193"        # IntelliJ platform build the pinned Analysis API embeds.
+coroutines = "1.9.0"
+serialization = "1.7.3"
+kaml = "0.61.0"                   # YAML for kotlinx.serialization (config + dismissals).
+jacksonDataformatYaml = "2.18.1" # JSON-Schema-side validation only.
+clikt = "5.0.1"                   # CLI parsing (client + daemon arg surface).
+caffeine = "3.1.8"
+junit = "5.11.3"
+kotest = "5.9.1"
+graalvm = "0.10.3"               # org.graalvm.buildtools.native Gradle plugin.
+detekt = "1.23.7"
+ktlint = "12.1.1"
+shadow = "8.3.5"
+kover = "0.9.8"                  # JetBrains Kotlin-native coverage. Class-level excludes only, like JaCoCo (plan §10).
+
+[libraries]
+kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib", version.ref = "kotlin" }
+kotlin-reflect = { module = "org.jetbrains.kotlin:kotlin-reflect", version.ref = "kotlin" }
+# The monolithic (NON-embeddable) Kotlin compiler. It co-locates, UNRELOCATED and in ONE jar:
+#   com.intellij.psi.* (Java + Kotlin PSI), org.jetbrains.kotlin.psi.* (KtFile), KotlinCoreEnvironment,
+#   and META-INF/extensions/*.xml. The single source of the PsiElement hierarchy (plan §2, §3.1) and
+#   the standalone compiler environment. NOT kotlin-compiler-embeddable (which relocates com.intellij),
+#   and NOT the split `-for-ide` jars (which separate KotlinCoreEnvironment from extensions/compiler.xml,
+#   breaking the standalone session's relative-to-jar resource lookup).
+kotlin-compiler = { module = "org.jetbrains.kotlin:kotlin-compiler", version.ref = "kotlin" }
+
+# --- K2 / JetBrains analysis platform: Kotlin Analysis API Standalone (plan §2). ---
+# These provide KaSession / analyze {} / KaModule and the embedded IntelliJ Java PSI.
+# Coordinates per the Kotlin Analysis API Standalone distribution; pinned to `analysisApi`.
+analysis-api = { module = "org.jetbrains.kotlin:analysis-api-for-ide", version.ref = "analysisApi" }
+analysis-api-standalone = { module = "org.jetbrains.kotlin:analysis-api-standalone-for-ide", version.ref = "analysisApi" }
+analysis-api-impl-base = { module = "org.jetbrains.kotlin:analysis-api-impl-base-for-ide", version.ref = "analysisApi" }
+# The FIR/K2 backend of the Analysis API. Renamed analysis-api-fir → analysis-api-k2 by Kotlin 2.1.
+analysis-api-fir = { module = "org.jetbrains.kotlin:analysis-api-k2-for-ide", version.ref = "analysisApi" }
+analysis-api-platform = { module = "org.jetbrains.kotlin:analysis-api-platform-interface-for-ide", version.ref = "analysisApi" }
+low-level-api-fir = { module = "org.jetbrains.kotlin:low-level-api-fir-for-ide", version.ref = "analysisApi" }
+symbol-light-classes = { module = "org.jetbrains.kotlin:symbol-light-classes-for-ide", version.ref = "analysisApi" }
+# The IntelliJ core that carries com.intellij.psi.PsiElement and the Java PSI implementation.
+intellij-core = { module = "com.jetbrains.intellij.platform:core", version.ref = "intellij" }
+intellij-core-impl = { module = "com.jetbrains.intellij.platform:core-impl", version.ref = "intellij" }
+intellij-java-psi = { module = "com.jetbrains.intellij.java:java-psi", version.ref = "intellij" }
+intellij-java-psi-impl = { module = "com.jetbrains.intellij.java:java-psi-impl", version.ref = "intellij" }
+
+coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+kaml = { module = "com.charleskorn.kaml:kaml", version.ref = "kaml" }
+clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
+# Runtime cache used by the Analysis API resolution layer (a transitive the for-ide jars don't carry).
+caffeine = { module = "com.github.ben-manes.caffeine:caffeine", version.ref = "caffeine" }
+
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version = "1.11.3" }
+kotest-assertions = { module = "io.kotest:kotest-assertions-core", version.ref = "kotest" }
+
+[bundles]
+# The full Analysis API Standalone surface; daemon-side only. The client links NONE of this.
+analysis-api = [
+    "analysis-api",
+    "analysis-api-standalone",
+    "analysis-api-impl-base",
+    "analysis-api-fir",
+    "analysis-api-platform",
+    "low-level-api-fir",
+    "symbol-light-classes",
+]
+intellij-psi = [
+    "intellij-core",
+    "intellij-core-impl",
+    "intellij-java-psi",
+    "intellij-java-psi-impl",
+]
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+graalvm-native = { id = "org.graalvm.buildtools.native", version.ref = "graalvm" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint" }
+shadow = { id = "com.gradleup.shadow", version.ref = "shadow" }
+kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
