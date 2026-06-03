@@ -1,0 +1,130 @@
+package dev.ktrics.daemon
+
+import dev.ktrics.client.proto.ClientRequest
+import dev.ktrics.client.proto.DaemonEndpoint
+import dev.ktrics.client.proto.DaemonFrame
+import dev.ktrics.client.proto.FrameCodec
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
+import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInstance
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.Channels
+import java.nio.channels.SocketChannel
+import kotlin.concurrent.thread
+import kotlin.io.path.createTempDirectory
+
+/**
+ * End-to-end transport: a real [SocketServer] over a unix-domain socket, driven by a hand-rolled client
+ * that frames a [ClientRequest] and reads [DaemonFrame]s back. Proves the accept → read →
+ * dispatch → frame → exit loop and the version handshake on the wire.
+ */
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class SocketServerTest {
+    private lateinit var projectRoot: java.io.File
+    private lateinit var server: SocketServer
+    private lateinit var serverThread: Thread
+
+    @BeforeAll
+    fun setUp() {
+        projectRoot = createTempDirectory("socketsrv").toFile()
+        server = SocketServer(projectRoot, idleTimeoutMs = 60_000)
+        serverThread = thread(isDaemon = true) { server.serve() }
+        // Wait for the socket to be bound before any client connects.
+        val socket = DaemonEndpoint.socketPath(projectRoot)
+        val deadline = System.nanoTime() + 10_000_000_000L
+        while (!socket.exists() && System.nanoTime() < deadline) Thread.sleep(20)
+    }
+
+    @AfterAll
+    fun tearDown() {
+        server.requestShutdown()
+        serverThread.join(5_000)
+    }
+
+    @Test
+    fun `the daemon self-terminates after the idle timeout elapses`() {
+        val root = createTempDirectory("idle").toFile()
+        try {
+            // A tiny idle window + poll interval: the watchdog should shut the server down within millis,
+            // so serve() returns and the thread dies (idle self-termination).
+            val idleServer = SocketServer(root, idleTimeoutMs = 10, idleCheckIntervalMs = 20)
+            val t = thread(isDaemon = true) { idleServer.serve() }
+            t.join(3_000)
+            t.isAlive shouldBe false
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a malformed request is caught and does not bring the server down`() {
+        val address = UnixDomainSocketAddress.of(DaemonEndpoint.socketPath(projectRoot).toPath())
+        SocketChannel.open(StandardProtocolFamily.UNIX).use { ch ->
+            ch.connect(address)
+            ch.write(java.nio.ByteBuffer.wrap(byteArrayOf(0, 0, 0))) // not even a full 4-byte length prefix
+        }
+        // handle()'s catch logged and closed that connection; a fresh valid request still gets served.
+        roundTrip(ClientRequest(argv = listOf("--version"), cwd = ".")).any { it is DaemonFrame.Exit } shouldBe true
+    }
+
+    /** Sends one request over a fresh connection and collects the frames up to (and including) Exit. */
+    private fun roundTrip(request: ClientRequest): List<DaemonFrame> {
+        val address = UnixDomainSocketAddress.of(DaemonEndpoint.socketPath(projectRoot).toPath())
+        SocketChannel.open(StandardProtocolFamily.UNIX).use { ch ->
+            ch.connect(address)
+            val out = DataOutputStream(Channels.newOutputStream(ch).buffered())
+            val input = DataInputStream(Channels.newInputStream(ch).buffered())
+            FrameCodec.writeRequest(out, request)
+            val frames = ArrayList<DaemonFrame>()
+            // Read until a terminal frame: Exit on the normal path, or VersionMismatch (after which the
+            // server closes the connection without an Exit). An EOF means the server closed early.
+            try {
+                while (true) {
+                    val frame = FrameCodec.readFrame(input)
+                    frames.add(frame)
+                    if (frame is DaemonFrame.Exit || frame is DaemonFrame.VersionMismatch) break
+                }
+            } catch (_: java.io.EOFException) {
+                // connection closed; return whatever frames arrived
+            }
+            return frames
+        }
+    }
+
+    @Test
+    fun `a version request streams stdout then a zero exit`() {
+        val frames = roundTrip(ClientRequest(argv = listOf("--version"), cwd = projectRoot.path))
+        val stdout = frames.filterIsInstance<DaemonFrame.Stdout>().joinToString("") { it.data }
+        stdout shouldContain "protocol v"
+        (frames.last() as DaemonFrame.Exit).code shouldBe 0
+    }
+
+    @Test
+    fun `an unknown command exits with the usage code on stderr`() {
+        val frames = roundTrip(ClientRequest(argv = listOf("frobnicate"), cwd = projectRoot.path))
+        val stderr = frames.filterIsInstance<DaemonFrame.Stderr>().joinToString("") { it.data }
+        stderr shouldContain "unknown command"
+        (frames.last() as DaemonFrame.Exit).code shouldBe 64
+    }
+
+    @Test
+    fun `a protocol mismatch yields a VersionMismatch frame`() {
+        val frames = roundTrip(ClientRequest(protocolVersion = 999, argv = listOf("--version"), cwd = projectRoot.path))
+        val mismatch = frames.filterIsInstance<DaemonFrame.VersionMismatch>().single()
+        mismatch.expected shouldBe 999
+    }
+
+    @Test
+    fun `daemon status round-trips the control surface`() {
+        val frames = roundTrip(ClientRequest(argv = listOf("daemon", "status"), cwd = projectRoot.path))
+        val stdout = frames.filterIsInstance<DaemonFrame.Stdout>().joinToString("") { it.data }
+        stdout shouldContain "ktricsd"
+        (frames.last() as DaemonFrame.Exit).code shouldBe 0
+    }
+}
