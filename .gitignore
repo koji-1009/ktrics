@@ -1,0 +1,34 @@
+# --- Gradle ---
+# `build/` (no leading slash) matches build/ at every depth: root + each module.
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+local.properties
+
+# --- Kotlin ---
+.kotlin/
+
+# --- IDE ---
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# --- Native-image / jpackage / AppCDS ---
+# nativeCompile + jpackage output land under build/ (covered above).
+# *.jsa is the AppCDS shared archive (e.g. ktricsd.jsa, opt-in).
+*.jsa
+*.build_artifacts.txt
+
+# --- ktrics runtime ---
+# Warm-cache + snapshot baseline (.ktrics/snapshot.json).
+# The daemon socket/pid live in $XDG_RUNTIME_DIR (or ~/.ktrics), not in the repo.
+.ktrics/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Scratch ---
+/tmp/
