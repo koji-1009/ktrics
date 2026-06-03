@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/koji-1009/ktrics/main/schemas/ktrics-config.schema.json",
+  "title": "ktrics configuration",
+  "description": "Schema for ktrics.yaml. Validated by `ktrics doctor`.",
+  "type": "object",
+  "properties": {
+    "ktrics": { "$ref": "#/$defs/ktrics" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ktrics": {
+      "type": "object",
+      "properties": {
+        "compose": { "type": "boolean", "description": "Enable @Composable skip rules." },
+        "test": { "type": "boolean", "description": "Enable JUnit/Kotlin-test size-metric skips." },
+        "resolution": { "enum": ["auto", "name-based", "resolved"], "default": "auto" },
+        "modules": { "$ref": "#/$defs/modules" },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/metricEntry" }
+        },
+        "unused": { "$ref": "#/$defs/unused" },
+        "exclude": { "type": "array", "items": { "type": "string" } },
+        "snapshot": {
+          "type": "object",
+          "properties": { "mode": { "enum": ["cache", "baseline", "none"] } },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "modules": {
+      "type": "object",
+      "properties": {
+        "discover": { "enum": ["off", "gradle", "maven"], "default": "off", "description": "v2 auto-derivation; off in v1." },
+        "declared": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "srcRoots": { "type": "array", "items": { "type": "string" } },
+              "classpath": { "type": "array", "items": { "type": "string" } },
+              "dependsOn": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["name", "srcRoots"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "metricEntry": {
+      "description": "Either `false` to disable, or thresholds. Per-language overrides under java/kotlin.",
+      "oneOf": [
+        { "type": "boolean" },
+        {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "warning": { "type": "number" },
+            "error": { "type": "number" },
+            "java": { "$ref": "#/$defs/perLang" },
+            "kotlin": { "$ref": "#/$defs/perLang" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "perLang": {
+      "type": "object",
+      "properties": {
+        "warning": { "type": "number" },
+        "error": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "unused": {
+      "type": "object",
+      "properties": {
+        "entry-points": { "type": "array", "items": { "type": "string" } },
+        "ignore-annotations": { "type": "array", "items": { "type": "string" } },
+        "presets": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Framework presets; unknown values are silently ignored (forward-compat)."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

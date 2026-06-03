@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/koji-1009/ktrics/main/schemas/ktrics-dismissals.schema.json",
+  "title": "ktrics dismissals sidecar",
+  "description": "Schema for ktrics-dismissals.yaml. Wins on collision with comment dismissals.",
+  "type": "object",
+  "properties": {
+    "dismissals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Stable violation id (first 16 hex of sha256(file|scope|metric))." },
+          "metric": { "type": "string", "description": "Metric id, when dismissing by scope+metric rather than id." },
+          "file": { "type": "string" },
+          "scope": { "type": "string", "description": "Dotted scope path, e.g. com.example.Foo.bar." },
+          "reason": { "type": "string", "description": "Justification; must meet minReasonLength to take effect." }
+        },
+        "required": ["reason"],
+        "anyOf": [
+          { "required": ["id"] },
+          { "required": ["metric", "scope"] },
+          { "required": ["metric", "file"] }
+        ],
+        "additionalProperties": false
+      }
+    },
+    "minReasonLength": { "type": "integer", "default": 12, "minimum": 0 }
+  },
+  "additionalProperties": false
+}

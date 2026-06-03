@@ -1,0 +1,70 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/koji-1009/ktrics/main/schemas/ktrics-config.schema.json
+#
+# ktrics dogfoods itself. This declares the multi-module graph by hand (v1); v2 will
+# auto-derive it from the Gradle build. Thresholds left at catalogue defaults except where noted.
+ktrics:
+  compose: false
+  test: true
+  resolution: auto
+  modules:
+    discover: off          # v2: gradle — auto-derive the graph from the build.
+    # The full 16-module production graph, declared by hand for self-application. The
+    # test-only fixture modules (:test-support, :test-session) are intentionally omitted — they are
+    # scaffolding, not shipped code under review, like testdata/.
+    declared:
+      - name: ir
+        srcRoots: ["ir/src/main/kotlin"]
+      - name: module
+        srcRoots: ["module/src/main/kotlin"]
+      - name: client
+        srcRoots: ["client/src/main/kotlin"]
+      - name: lang-api
+        srcRoots: ["lang-api/src/main/kotlin"]
+        dependsOn: ["ir"]
+      - name: metric
+        srcRoots: ["metric/src/main/kotlin"]
+        dependsOn: ["ir", "lang-api"]
+      - name: coverage
+        srcRoots: ["coverage/src/main/kotlin"]
+        dependsOn: ["ir"]
+      - name: vcs
+        srcRoots: ["vcs/src/main/kotlin"]
+        dependsOn: ["ir", "metric"]
+      - name: dismiss
+        srcRoots: ["dismiss/src/main/kotlin"]
+        dependsOn: ["ir", "metric"]
+      - name: report
+        srcRoots: ["report/src/main/kotlin"]
+        dependsOn: ["ir", "metric"]
+      - name: config
+        srcRoots: ["config/src/main/kotlin"]
+        dependsOn: ["ir", "module", "metric"]
+      - name: unused
+        srcRoots: ["unused/src/main/kotlin"]
+        dependsOn: ["ir", "lang-api", "module", "metric"]
+      - name: frontend
+        srcRoots: ["frontend/src/main/kotlin"]
+        dependsOn: ["ir", "lang-api", "module"]
+      - name: frontend-kotlin
+        srcRoots: ["frontend/kotlin/src/main/kotlin"]
+        dependsOn: ["frontend", "ir", "lang-api"]
+      - name: frontend-java
+        srcRoots: ["frontend/java/src/main/kotlin"]
+        dependsOn: ["frontend", "ir", "lang-api"]
+      - name: engine
+        srcRoots: ["engine/src/main/kotlin"]
+        dependsOn: ["ir", "module", "metric", "report", "config", "frontend", "frontend-kotlin", "frontend-java", "unused", "coverage", "vcs", "dismiss"]
+      - name: daemon
+        srcRoots: ["daemon/src/main/kotlin"]
+        dependsOn: ["engine", "client"]
+  metrics:
+    cyclomatic-complexity: { warning: 10, error: 20 }
+    cognitive-complexity:  { warning: 15 }
+    number-of-parameters:  { warning: 4, error: 8, kotlin: { warning: 6 } }
+    # halstead-volume: { enabled: true, warning: 1500 }   # opt into an off-by-default metric
+  unused:
+    entry-points: ["main", "@Test"]
+    ignore-annotations: ["VisibleForTesting"]
+    presets: [kotlinx-serialization]
+  exclude: ["**/build/**", "**/testdata/**"]
+  snapshot: { mode: baseline }
