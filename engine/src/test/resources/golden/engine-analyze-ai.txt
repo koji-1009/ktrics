@@ -1,0 +1,40 @@
+# ktrics ai-report v1
+tool: ktrics <VERSION>
+root: <ROOT>
+summary:
+  files: 1 (java: 0, kotlin: 1)
+  violations: 2 (errors: 0, warnings: 2)
+  name-based-results: 0
+violations:
+  - id: 5dc192e524504153
+    metric: boolean-trap
+    severity: warning
+    language: kotlin
+    polarity: LowerIsBetter
+    scope: sample.Tangled.tangled
+    location: src/main/kotlin/sample/Tangled.kt:6
+    value: 3
+    threshold: 2
+    rationale: "Boolean parameters make call sites opaque (`render(true, false)`) and usually encode a hidden mode. They multiply behaviours a method must support."
+    refactorHints:
+      - "Replace the boolean with a two-value enum that names each case."
+      - "Split the method into two intention-revealing methods."
+    references:
+      - "McConnell, S. (2004). Code Complete, 2nd ed."
+      - "Bloch, J. (2018). Effective Java, 3rd ed., Item 51."
+  - id: 516db5a6f21f464d
+    metric: cyclomatic-complexity
+    severity: warning
+    language: kotlin
+    polarity: LowerIsBetter
+    scope: sample.Tangled.tangled
+    location: src/main/kotlin/sample/Tangled.kt:6
+    value: 11
+    threshold: 10
+    rationale: "Counts independent paths through a method (1 + decision points). High values mean more branches to test and reason about; the loop should consider extracting or flattening."
+    refactorHints:
+      - "Extract a cohesive branch into a well-named private method."
+      - "Replace nested conditionals with early returns (guard clauses)."
+      - "Replace a type-switch with polymorphism where the cases model subtypes."
+    references:
+      - "McCabe, T. (1976). A Complexity Measure. IEEE TSE."
