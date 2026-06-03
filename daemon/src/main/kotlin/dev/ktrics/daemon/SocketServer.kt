@@ -30,6 +30,8 @@ class SocketServer(
     private val idleTimeoutMs: Long = DEFAULT_IDLE_TIMEOUT_MS,
     /** How often the idle watchdog polls; injectable so the self-termination path is testable in millis. */
     private val idleCheckIntervalMs: Long = IDLE_CHECK_INTERVAL_MS,
+    /** The blocking accept, injectable so the accept-error backoff is testable without forcing a real fd failure. */
+    private val acceptConnection: (ServerSocketChannel) -> SocketChannel = { it.accept() },
 ) : CommandRouter.DaemonControl {
     private val socketPath = DaemonEndpoint.socketPath(projectRoot)
     private val pidFile = DaemonEndpoint.pidFile(projectRoot)
@@ -60,7 +62,7 @@ class SocketServer(
         while (running) {
             val conn =
                 try {
-                    channel.accept()
+                    acceptConnection(channel)
                 } catch (_: Exception) {
                     if (!running) break
                     // A persistent accept() failure (e.g. fd exhaustion) would otherwise hot-spin at

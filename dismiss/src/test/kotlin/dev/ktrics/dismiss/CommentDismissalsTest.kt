@@ -88,6 +88,18 @@ class CommentDismissalsTest {
     }
 
     @Test
+    fun `a span that is all trivia through end of file yields no dismissal`() {
+        // Every line from the span start to EOF is a comment, so keywordIndex never finds a keyword line and
+        // runs off the end (its coerceAtMost fallback); the upward scan then finds no directive → null.
+        val src =
+            """
+            // a trailing comment block
+            // with no declaration keyword beneath it
+            """.trimIndent()
+        CommentDismissals(src).forDeclaration(declLine = 1, metric = "cyclomatic-complexity").shouldBeNull()
+    }
+
+    @Test
     fun `a code line directly above the declaration stops the scan`() {
         val src =
             """

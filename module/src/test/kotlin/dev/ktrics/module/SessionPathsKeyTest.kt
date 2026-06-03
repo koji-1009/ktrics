@@ -50,4 +50,24 @@ class SessionPathsKeyTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun `classpathFiles resolves entries to absolute existing files, dropping missing ones and dups`() {
+        val root = createTempDirectory("cp").toFile()
+        try {
+            File(root, "libs").mkdirs()
+            File(root, "libs/a.jar").writeText("")
+            File(root, "libs/b.jar").writeText("")
+            // A relative entry, the same jar as an absolute path (→ de-duplicated after normalization), and a
+            // non-existent entry (→ filtered out): only the two real jars survive, each once.
+            val graph =
+                ModuleGraph.singleModule(
+                    srcRoots = emptyList(),
+                    classpath = listOf("libs/a.jar", File(root, "libs/a.jar").absolutePath, "libs/b.jar", "libs/missing.jar"),
+                )
+            SessionPathsKey.classpathFiles(graph, root).map { it.name } shouldContainExactlyInAnyOrder listOf("a.jar", "b.jar")
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 }

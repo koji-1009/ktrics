@@ -73,9 +73,93 @@ class SocketServerTest {
         roundTrip(ClientRequest(argv = listOf("--version"), cwd = ".")).any { it is DaemonFrame.Exit } shouldBe true
     }
 
+    @Test
+    fun `a transient accept error backs off, then a shutdown ends the loop`() {
+        val root = createTempDirectory("accept-err").toFile()
+        try {
+            // First accept() throws with running still true → the loop must back off and retry (not die, not
+            // hot-spin). The second call flips running=false and throws again, so the catch breaks cleanly.
+            val firstCall = java.util.concurrent.atomic.AtomicBoolean(true)
+            lateinit var server: SocketServer
+            server =
+                SocketServer(
+                    root,
+                    idleTimeoutMs = 60_000,
+                    acceptConnection = {
+                        if (firstCall.getAndSet(false)) {
+                            throw java.io.IOException("transient accept failure")
+                        }
+                        server.requestShutdown()
+                        throw java.nio.channels.ClosedChannelException()
+                    },
+                )
+            val t = thread(isDaemon = true) { server.serve() }
+            t.join(3_000)
+            t.isAlive shouldBe false
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a stale socket file with no listener is cleaned so the daemon can rebind`() {
+        val root = createTempDirectory("stale").toFile()
+        try {
+            // Leave a regular file where the socket belongs: it exists but nothing is listening, so the
+            // live-probe must fail and cleanStaleSocket must delete it before bind (a truly stale endpoint).
+            val socket = DaemonEndpoint.socketPath(root)
+            socket.parentFile.mkdirs()
+            socket.writeText("leftover")
+            val staleServer = SocketServer(root, idleTimeoutMs = 60_000)
+            val t = thread(isDaemon = true) { staleServer.serve() }
+            try {
+                // The leftover file already makes socket.exists() true, so poll for a *live listener*
+                // (a connect that succeeds) instead — that only happens once serve() deletes it and rebinds.
+                val address = UnixDomainSocketAddress.of(socket.toPath())
+                val deadline = System.nanoTime() + 5_000_000_000L
+                var bound = false
+                while (!bound && System.nanoTime() < deadline) {
+                    try {
+                        SocketChannel.open(StandardProtocolFamily.UNIX).use { ch ->
+                            ch.connect(address)
+                            bound = true
+                        }
+                    } catch (_: Exception) {
+                        Thread.sleep(20)
+                    }
+                }
+                bound shouldBe true
+                // A real round-trip proves the daemon rebound the socket rather than choking on the leftover.
+                roundTrip(ClientRequest(argv = listOf("--version"), cwd = root.path), root)
+                    .any { it is DaemonFrame.Exit } shouldBe true
+            } finally {
+                staleServer.requestShutdown()
+                t.join(5_000)
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a live incumbent makes a second daemon on the same root abort startup`() {
+        // projectRoot already has a live server (setUp). A second server on the same root must detect the
+        // live listener via the connect-probe and abort serve() without unlinking the incumbent's socket.
+        val second = SocketServer(projectRoot, idleTimeoutMs = 60_000)
+        val t = thread(isDaemon = true) { second.serve() }
+        t.join(2_000)
+        t.isAlive shouldBe false // serve() returned early: cleanStaleSocket() saw a live listener and bailed.
+        // The incumbent is untouched and still serving.
+        roundTrip(ClientRequest(argv = listOf("--version"), cwd = projectRoot.path))
+            .any { it is DaemonFrame.Exit } shouldBe true
+    }
+
     /** Sends one request over a fresh connection and collects the frames up to (and including) Exit. */
-    private fun roundTrip(request: ClientRequest): List<DaemonFrame> {
-        val address = UnixDomainSocketAddress.of(DaemonEndpoint.socketPath(projectRoot).toPath())
+    private fun roundTrip(
+        request: ClientRequest,
+        root: java.io.File = projectRoot,
+    ): List<DaemonFrame> {
+        val address = UnixDomainSocketAddress.of(DaemonEndpoint.socketPath(root).toPath())
         SocketChannel.open(StandardProtocolFamily.UNIX).use { ch ->
             ch.connect(address)
             val out = DataOutputStream(Channels.newOutputStream(ch).buffered())

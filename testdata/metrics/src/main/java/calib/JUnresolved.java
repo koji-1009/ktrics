@@ -34,3 +34,15 @@ public class JUnresolved {
         };
     }
 }
+
+// Extends a base AND implements an interface that are declared nowhere (GhostBase/GhostMixin never
+// compiled): supertypes() can't resolve either reference, so each degrades to a NAME_BASED TypeRef
+// (the resolved classifier's unresolved-supertype branch). Isolated — nothing references it and it
+// adds no resolved inheritance edge, so it perturbs no calibration metric. The @Override on toString
+// also exercises modifiers()' annotation scan (the syntactic isOverride path).
+class JGhostChild extends GhostBase implements GhostMixin {
+    @Override
+    public String toString() {
+        return "ghost";
+    }
+}

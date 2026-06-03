@@ -92,4 +92,13 @@ class ResolvedJavaClassifierTest {
         supers.map { it.qualifiedName } shouldContain "calib.JGreeter"
         supers.none { it.qualifiedName == "java.lang.Object" } shouldBe true
     }
+
+    @Test
+    fun `an unresolvable supertype degrades to a name-based ref`() {
+        // JGhostChild extends GhostBase implements GhostMixin, neither of which exists: ref.resolve() is
+        // null for both, so supertypes() takes the else branch and emits NAME_BASED refs by syntactic name.
+        val supers = classifier.supertypes(unresolved.type("JGhostChild").node)
+        supers.first { it.name == "GhostBase" }.resolution shouldBe Resolution.NAME_BASED
+        supers.first { it.name == "GhostMixin" }.resolution shouldBe Resolution.NAME_BASED
+    }
 }

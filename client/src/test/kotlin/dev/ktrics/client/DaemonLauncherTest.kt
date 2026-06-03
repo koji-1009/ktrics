@@ -3,6 +3,7 @@ package dev.ktrics.client
 import dev.ktrics.client.proto.DaemonEndpoint
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Test
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -132,6 +133,67 @@ class DaemonLauncherTest {
                 try {
                     val launcher = DaemonLauncher(root, startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) })
                     launcher.respawn(timeoutMs = 2_000) shouldBe true
+                    victim.waitFor(2, TimeUnit.SECONDS)
+                    victim.isAlive shouldBe false
+                } finally {
+                    server?.close()
+                }
+            } finally {
+                victim.destroyForcibly()
+            }
+        }
+    }
+
+    @Test
+    fun `respawn escalates to a forcible kill when the daemon ignores SIGTERM`() {
+        assumeFalse(System.getProperty("os.name").startsWith("Windows"), "no clean SIGTERM-trapping victim on Windows")
+        withProject { root ->
+            // A victim that traps and ignores SIGTERM and stays busy (stdin-independent, so the spawn pipe
+            // can't EOF it early): destroy() is swallowed, so the grace window times out (awaitExit's
+            // TimeoutException path) and stopExisting must escalate to destroyForcibly() (SIGKILL) — the path
+            // the cooperative `sleep` victim skips. The inner `sleep` child is orphaned for <1s on the kill.
+            val victim = ProcessBuilder("sh", "-c", "trap '' TERM; while :; do sleep 1; done").start()
+            try {
+                DaemonEndpoint.pidFile(root).writeText(victim.pid().toString())
+                // Let the shell install its TERM trap before respawn fires SIGTERM, otherwise the signal can
+                // race ahead of the trap and kill the victim on the default disposition — skipping escalation.
+                Thread.sleep(500)
+                var server: AutoCloseable? = null
+                try {
+                    val launcher = DaemonLauncher(root, startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) })
+                    val elapsed = kotlin.system.measureTimeMillis { launcher.respawn(timeoutMs = 3_000) shouldBe true }
+                    // The grace window must actually elapse before the forcible kill — proof the escalation
+                    // path ran rather than the victim dying on the initial SIGTERM.
+                    (elapsed >= 900) shouldBe true
+                    victim.waitFor(2, TimeUnit.SECONDS)
+                    victim.isAlive shouldBe false // survived SIGTERM, killed only by the forcible escalation
+                } finally {
+                    server?.close()
+                }
+            } finally {
+                victim.destroyForcibly()
+            }
+        }
+    }
+
+    @Test
+    fun `respawn treats an interrupted grace wait as exited and still escalates`() {
+        assumeFalse(System.getProperty("os.name").startsWith("Windows"), "no clean SIGTERM-trapping victim on Windows")
+        withProject { root ->
+            // Same trap-protected victim, but here the waiting thread is interrupted: awaitExit's blocking
+            // get() throws InterruptedException (not TimeoutException), exercising its generic-exception arm,
+            // which treats a still-live handle as "not exited" so stopExisting still escalates to a kill.
+            val victim = ProcessBuilder("sh", "-c", "trap '' TERM; while :; do sleep 1; done").start()
+            try {
+                DaemonEndpoint.pidFile(root).writeText(victim.pid().toString())
+                Thread.sleep(500) // let the TERM trap install first (see the escalation test)
+                var server: AutoCloseable? = null
+                try {
+                    val launcher = DaemonLauncher(root, startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) })
+                    // Pre-set the interrupt flag so the first awaitExit get() throws InterruptedException at once;
+                    // the throw clears the flag, so the post-escalation wait and spawn complete normally.
+                    Thread.currentThread().interrupt()
+                    launcher.respawn(timeoutMs = 3_000) shouldBe true
                     victim.waitFor(2, TimeUnit.SECONDS)
                     victim.isAlive shouldBe false
                 } finally {

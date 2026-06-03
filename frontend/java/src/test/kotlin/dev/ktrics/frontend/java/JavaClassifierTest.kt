@@ -157,6 +157,15 @@ class JavaClassifierTest {
     }
 
     @Test
+    fun `modifiers derive isOverride from an Override annotation`() {
+        // Java's @Override is an annotation, not a modifier keyword, so modifiers() must scan the method's
+        // annotations to set isOverride — JGhostChild.toString() carries @Override.
+        val unresolved = fixture.javaUnit("JUnresolved.java")
+        val toString = unresolved.type("JGhostChild").methods.first { it.name == "toString" }
+        classifier.modifiers(toString.node).isOverride shouldBe true
+    }
+
+    @Test
     fun `text returns the source and whitespace nodes are flagged`() {
         val node = shapes.function("straight").node
         classifier.text(node).contains("straight") shouldBe true

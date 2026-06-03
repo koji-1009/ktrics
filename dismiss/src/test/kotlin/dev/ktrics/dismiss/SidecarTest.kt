@@ -8,6 +8,7 @@ import dev.ktrics.metric.ScopeKind
 import dev.ktrics.metric.Severity
 import dev.ktrics.metric.Violation
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -87,6 +88,19 @@ class SidecarTest {
                 strict = false,
             )
         applier.apply(listOf(violation(file = "src/Foo.kt"))).single().dismissal.shouldBeInstanceOf<DismissalState.Dismissed>()
+    }
+
+    @Test
+    fun `a minReasonLength that is present but invalid is coerced to the default and warned`() {
+        // A non-integer and a negative both miss the (non-negative integer) contract: each falls back to the
+        // default AND records a warning, rather than silently weakening dismissal gating.
+        val notAnInt = Sidecar.parse("minReasonLength: oops\n")
+        notAnInt.minReasonLength shouldBe DEFAULT_MIN_REASON_LENGTH
+        notAnInt.warnings.single() shouldContain "invalid minReasonLength 'oops'"
+
+        val negative = Sidecar.parse("minReasonLength: -3\n")
+        negative.minReasonLength shouldBe DEFAULT_MIN_REASON_LENGTH
+        negative.warnings.single() shouldContain "invalid minReasonLength '-3'"
     }
 
     @Test
