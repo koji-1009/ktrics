@@ -1,0 +1,63 @@
+name: release
+
+# When a GitHub Release is published, build the per-OS CLI archives and attach them to it.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # native-image can't cross-compile, so the client is built on each target OS.
+        include:
+          - { os: ubuntu-latest,  target: linux-x64,   archive: tar }
+          - { os: macos-latest,   target: macos-arm64, archive: tar }
+          - { os: windows-latest, target: windows-x64, archive: zip }
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # GraalVM JDK 21: the native-image toolchain + the JDK the rest of the build needs.
+      - uses: graalvm/setup-graalvm@bef4b0e916c7dd079bf60fb95d49139f67e32c5f # v1.5.3
+        with:
+          java-version: '21'
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build native client + daemon distribution
+        shell: bash
+        run: ./gradlew --no-daemon :client:nativeCompile :daemon:installDist
+
+      # Drop the native `ktrics` into the daemon dist's bin/ so DaemonLauncher finds `ktricsd` as a
+      # sibling (lib/ stays next to bin/), then archive and attach it to the release.
+      - name: Package and upload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.release.tag_name }}"
+          stage="ktrics-${tag#v}-${{ matrix.target }}"
+          dist="$(find daemon/build/install -mindepth 1 -maxdepth 1 -type d)"
+          if [ "${{ matrix.archive }}" = zip ]; then
+            cp client/build/native/nativeCompile/ktrics.exe "$dist/bin/"
+            mv "$dist" "$stage"
+            7z a -tzip "$stage.zip" "$stage" >/dev/null
+            asset="$stage.zip"
+          else
+            cp client/build/native/nativeCompile/ktrics "$dist/bin/"
+            mv "$dist" "$stage"
+            tar -czf "$stage.tar.gz" "$stage"
+            asset="$stage.tar.gz"
+          fi
+          gh release upload "$tag" "$asset" --clobber
