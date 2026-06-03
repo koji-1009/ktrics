@@ -51,34 +51,35 @@ class AnalysisEngine(
      * this run is still reading (use-after-dispose). The daemon's loop is sequential, so the cost is nil;
      * this can be refined to per-key locking later if true concurrency is ever wanted.
      */
-    fun analyze(graph: ModuleGraph): AnalysisReport = synchronized(WarmIndexCache) {
-        val warm = WarmIndexCache.get(projectRoot, graph, configHash, resolved)
-        val classifierFor: (Lang) -> NodeClassifier = { lang ->
-            if (lang == Lang.KOTLIN) kotlinClassifier else javaClassifier
-        }
-        // Excluded files still feed the index (so they remain resolution targets), but are not measured.
-        val measuredUnits = warm.units.filterNot { isExcluded(it.path) }
-        val output = MetricRunner(warm.index, settings, skips, classifierFor).run(measuredUnits)
+    fun analyze(graph: ModuleGraph): AnalysisReport =
+        synchronized(WarmIndexCache) {
+            val warm = WarmIndexCache.get(projectRoot, graph, configHash, resolved)
+            val classifierFor: (Lang) -> NodeClassifier = { lang ->
+                if (lang == Lang.KOTLIN) kotlinClassifier else javaClassifier
+            }
+            // Excluded files still feed the index (so they remain resolution targets), but are not measured.
+            val measuredUnits = warm.units.filterNot { isExcluded(it.path) }
+            val output = MetricRunner(warm.index, settings, skips, classifierFor).run(measuredUnits)
 
-        // Apply dismissals: drop accepted ones; keep rejected ones live and flagged.
-        val applier = DismissalApplier(projectRoot, Sidecar.load(projectRoot), strictDismiss)
-        val (live, _) = applier.partition(output.violations)
-        // Stamp complexityJustified from coverage before sorting.
-        val annotated = CoverageAnnotator.annotate(live, coverage)
-        val violations = Actionability.sort(annotated)
-        val files =
-            measuredUnits.map { unit ->
-                FileEntry(unit.path, unit.lang, violations.count { it.file == unit.path })
-            }.sortedBy { it.path }
-        AnalysisReport(
-            version = Build.VERSION,
-            root = projectRoot.absolutePath,
-            summary = ReportSummary.of(violations, files),
-            violations = violations,
-            files = files,
-            measurements = if (includeMeasurements) output.results else emptyList(),
-        )
-    }
+            // Apply dismissals: drop accepted ones; keep rejected ones live and flagged.
+            val applier = DismissalApplier(projectRoot, Sidecar.load(projectRoot), strictDismiss)
+            val (live, _) = applier.partition(output.violations)
+            // Stamp complexityJustified from coverage before sorting.
+            val annotated = CoverageAnnotator.annotate(live, coverage)
+            val violations = Actionability.sort(annotated)
+            val files =
+                measuredUnits.map { unit ->
+                    FileEntry(unit.path, unit.lang, violations.count { it.file == unit.path })
+                }.sortedBy { it.path }
+            AnalysisReport(
+                version = Build.VERSION,
+                root = projectRoot.absolutePath,
+                summary = ReportSummary.of(violations, files),
+                violations = violations,
+                files = files,
+                measurements = if (includeMeasurements) output.results else emptyList(),
+            )
+        }
 
     private fun isExcluded(relativePath: String): Boolean {
         if (excludeMatchers.isEmpty()) return false

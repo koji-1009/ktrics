@@ -146,7 +146,8 @@ class UnusedDetector(
                             classifier,
                             p.node,
                             false,
-                            isOverride = false, // a property is not seeded as an override root
+                            // a property is not seeded as an override root
+                            isOverride = false,
                             topLevel = true,
                         ),
                     )
@@ -174,7 +175,8 @@ class UnusedDetector(
                 classifier,
                 type.node,
                 false,
-                isOverride = false, // a type itself is never an "override" root
+                // a type itself is never an "override" root
+                isOverride = false,
                 topLevel,
             ),
         )
@@ -223,7 +225,21 @@ class UnusedDetector(
         val outgoing = (called.map { it.name } + types.map { it.name }).toSet()
         val edgeResolutions = called.map { it.resolution } + types.map { it.resolution }
         val edgeResolution = if (edgeResolutions.isEmpty()) null else Resolution.weakest(edgeResolutions)
-        return Decl(key, display, kind, visibility, annotations, unit.path, span, unit.lang, isMain, isOverride, topLevel, outgoing, edgeResolution)
+        return Decl(
+            key,
+            display,
+            kind,
+            visibility,
+            annotations,
+            unit.path,
+            span,
+            unit.lang,
+            isMain,
+            isOverride,
+            topLevel,
+            outgoing,
+            edgeResolution,
+        )
     }
 
     private fun bfs(

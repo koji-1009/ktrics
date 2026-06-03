@@ -186,6 +186,7 @@ object AnalyzeCommand : CommandHandler {
     }
 
     /** Loads `--coverage <path>` (JaCoCo XML), or empty for `none`/absent. Null on a bad path (→ 65). */
+    @Suppress("TooGenericExceptionCaught")
     private fun loadCoverage(ctx: CommandContext): CoverageData? {
         val path = ctx.option("--coverage") ?: return CoverageData.EMPTY
         if (path.equals("none", ignoreCase = true)) return CoverageData.EMPTY

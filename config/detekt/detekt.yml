@@ -5,8 +5,9 @@
 complexity:
   LongParameterList:
     # IR carriers (SourceUnit, TypeDecl, FunctionDecl, Violation, ...) and the unused-detector's declOf
-    # builder are wide data-shaping signatures by nature.
-    functionThreshold: 12
+    # builder are wide data-shaping signatures by nature. detekt fires at value >= threshold, so
+    # allowing declOf's 12 params needs 13.
+    functionThreshold: 13
     constructorThreshold: 14
     ignoreDefaultParameters: true
     ignoreDataClasses: true

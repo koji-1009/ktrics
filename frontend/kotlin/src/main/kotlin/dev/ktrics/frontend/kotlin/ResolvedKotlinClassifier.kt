@@ -134,7 +134,14 @@ class ResolvedKotlinClassifier : KotlinClassifier() {
                     val classId = entry.typeReference?.type?.expandedSymbol?.classId
                     if (classId != null) {
                         classId.takeIf { it.asFqNameString() != "kotlin.Any" }
-                            ?.let { TypeRef(it.shortClassName.asString(), it.asFqNameString(), it.packageFqName.asString(), Resolution.RESOLVED) }
+                            ?.let {
+                                TypeRef(
+                                    it.shortClassName.asString(),
+                                    it.asFqNameString(),
+                                    it.packageFqName.asString(),
+                                    Resolution.RESOLVED,
+                                )
+                            }
                     } else {
                         entry.typeReference?.text?.let { TypeRef(it, null, null, Resolution.NAME_BASED) }
                     }

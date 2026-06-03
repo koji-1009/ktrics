@@ -225,7 +225,8 @@ class CallGraph private constructor(private val nodes: List<Node>) {
                     nodes +=
                         node(
                             key,
-                            key, // a property has no parameter signature; it cannot be overloaded
+                            // a property has no parameter signature; it cannot be overloaded
+                            key,
                             "property",
                             unit.path,
                             p.span.startLine,
@@ -250,7 +251,15 @@ class CallGraph private constructor(private val nodes: List<Node>) {
             into += node(qn, qn, type.kind.name.lowercase(), unit.path, type.span.startLine, emptyList())
             type.methods.forEach { m ->
                 val key = "$qn.${m.name}"
-                into += node(key, fnIdentity(key, m), "method", unit.path, m.span.startLine, classifier.outgoingRefNames(m.bodyNode ?: m.node))
+                into +=
+                    node(
+                        key,
+                        fnIdentity(key, m),
+                        "method",
+                        unit.path,
+                        m.span.startLine,
+                        classifier.outgoingRefNames(m.bodyNode ?: m.node),
+                    )
             }
             type.nested.forEach { collectType(it, unit, classifier, into) }
         }
@@ -272,7 +281,16 @@ class CallGraph private constructor(private val nodes: List<Node>) {
             file: String,
             line: Int,
             rawOut: List<String>,
-        ): Node = Node(identity = identity, key = key, simpleName = key.substringAfterLast('.'), kind = kind, file = file, line = line, rawOut = rawOut)
+        ): Node =
+            Node(
+                identity = identity,
+                key = key,
+                simpleName = key.substringAfterLast('.'),
+                kind = kind,
+                file = file,
+                line = line,
+                rawOut = rawOut,
+            )
 
         /** Normalises a raw reference text (which may be generic or nullable) to a simple name. */
         private fun simpleOf(raw: String): String =
