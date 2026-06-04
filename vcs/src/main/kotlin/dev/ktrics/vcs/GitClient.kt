@@ -44,25 +44,6 @@ class GitClient(
         return run("diff", "--name-only", ref, "--").lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
     }
 
-    /** Files changed between two refs (for regression). */
-    fun changedFilesBetween(
-        before: String,
-        after: String,
-    ): List<String> {
-        resolve(before)
-        resolve(after)
-        return run("diff", "--name-only", before, after, "--").lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
-    }
-
-    /** Contents of [path] at [ref], or null when the path did not exist there. */
-    fun fileAt(
-        ref: String,
-        path: String,
-    ): String? {
-        val (out, code) = runChecked("show", "$ref:$path")
-        return if (code == 0) out else null
-    }
-
     /** Materialises [ref] into a detached worktree at [dir] (for analyzing a past revision). */
     fun addWorktree(
         dir: File,
@@ -99,8 +80,8 @@ class GitClient(
             return (stdout[0] ?: "") to TIMED_OUT_CODE
         }
         // The process has exited, so its stdout is at (or racing to) EOF — join UNBOUNDED so a large
-        // `git diff`/`git show` is read in full. A bounded join here truncated big output to "" and made
-        // the caller (changedFilesBetween/fileAt) report 'no changes' on a successful command.
+        // `git diff` is read in full. A bounded join here truncated big output to "" and made the
+        // caller (e.g. changedFilesSince) report 'no changes' on a successful command.
         reader.join()
         return (stdout[0] ?: "") to process.exitValue()
     }

@@ -12,3 +12,21 @@ object RulesCommand : CommandHandler {
         return Exit.OK
     }
 }
+
+/** `ktrics explain <metric-id>` — the full per-metric auto-explain `rules` points at. */
+object ExplainCommand : CommandHandler {
+    override fun run(ctx: CommandContext): Int {
+        val id = ctx.firstPositional()
+        if (id == null) {
+            ctx.sink.errLine("ktrics: usage: ktrics explain <metric-id>  (run `ktrics rules` for the catalogue)")
+            return Exit.USAGE
+        }
+        val text = CatalogRenderer.explainMetric(id)
+        if (text == null) {
+            ctx.sink.errLine("ktrics: unknown metric '$id' (run `ktrics rules` for valid ids).")
+            return Exit.USAGE
+        }
+        ctx.sink.out(text)
+        return Exit.OK
+    }
+}

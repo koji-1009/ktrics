@@ -1,27 +1,11 @@
 package dev.ktrics.module
 
 import io.kotest.assertions.throwables.shouldThrow
-import io.kotest.matchers.collections.shouldBeEmpty
-import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import org.junit.jupiter.api.Test
 
 class ModuleGraphTest {
-    @Test
-    fun `transitive dependencies are computed across edges`() {
-        val graph =
-            ModuleGraph(
-                listOf(
-                    ModuleNode("app", listOf("app/src"), dependsOn = listOf("feature")),
-                    ModuleNode("feature", listOf("feature/src"), dependsOn = listOf("core")),
-                    ModuleNode("core", listOf("core/src")),
-                ),
-            )
-        graph.transitiveDependencies("app").map { it.name } shouldContainExactlyInAnyOrder listOf("feature", "core")
-        graph.downstreamOf("core").map { it.name } shouldContainExactlyInAnyOrder listOf("app", "feature")
-    }
-
     @Test
     fun `a dependency cycle is rejected`() {
         shouldThrow<IllegalArgumentException> {
@@ -59,7 +43,7 @@ class ModuleGraphTest {
     }
 
     @Test
-    fun `a diamond dependency graph is acyclic and resolves the shared transitive dep once`() {
+    fun `a diamond dependency graph is acyclic`() {
         // a → {b, c}; b → d; c → d. A shared transitive dependency is NOT a cycle — the tri-colour DFS
         // must accept it (a naive "already visited" guard would wrongly reject the second path into d).
         val graph =
@@ -72,7 +56,6 @@ class ModuleGraphTest {
                 ),
             )
         graph.cyclePath() shouldBe null
-        graph.transitiveDependencies("a").map { it.name } shouldContainExactlyInAnyOrder listOf("b", "c", "d")
     }
 
     @Test
@@ -90,7 +73,7 @@ class ModuleGraphTest {
     }
 
     @Test
-    fun `module looks up a node by name and direct dependencies follow declaration order`() {
+    fun `module looks up a node by name`() {
         val graph =
             ModuleGraph(
                 listOf(
@@ -101,8 +84,6 @@ class ModuleGraphTest {
             )
         graph.module("feature")!!.srcRoots shouldBe listOf("feature/src")
         graph.module("ghost") shouldBe null
-        graph.directDependencies("app").map { it.name } shouldBe listOf("feature", "core")
-        graph.directDependencies("ghost").shouldBeEmpty()
     }
 
     @Test

@@ -65,8 +65,6 @@ class FakeClassifier : NodeClassifier {
 
     override fun text(n: PsiElement): String = ""
 
-    override fun isCommentOrWhitespace(n: PsiElement): Boolean = false
-
     override fun isDecisionPoint(n: PsiElement): Boolean = false
 
     override fun isNestingBoundary(n: PsiElement): Boolean = false

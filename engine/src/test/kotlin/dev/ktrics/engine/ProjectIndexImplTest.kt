@@ -58,14 +58,6 @@ class ProjectIndexImplTest {
     }
 
     @Test
-    fun `types are indexed by qualified name and by package`() {
-        index.typeByQName("com.a.A")!!.name shouldBe "A"
-        index.typeByQName("com.absent.X") shouldBe null
-        index.typesInPackage("com.a").map { it.name } shouldBe listOf("A")
-        index.packageNames() shouldContainExactlyInAnyOrder listOf("com.a", "com.b")
-    }
-
-    @Test
     fun `a supertype resolves by import, then by a unique simple name, else stays unresolved`() {
         val nameBased = { s: String -> dev.ktrics.ir.TypeRef(s, null, null, Resolution.NAME_BASED) }
         val idx =

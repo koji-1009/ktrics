@@ -74,10 +74,11 @@ object Doctor {
         }
         // The ordering check compares both bounds, so it can only run when both are set.
         if (warning == null || error == null) return null
-        return when (polarity) {
-            Polarity.LOWER_IS_BETTER -> if (warning > error) "warning ($warning) should be <= error ($error)" else null
-            Polarity.HIGHER_IS_BETTER -> if (warning < error) "warning ($warning) should be >= error ($error)" else null
-            Polarity.INFORMATIONAL -> null
-        }
+        val (misordered, relation) =
+            when (polarity) {
+                Polarity.LOWER_IS_BETTER -> (warning > error) to "<="
+                else -> (warning < error) to ">=" // HIGHER_IS_BETTER; INFORMATIONAL returned above
+            }
+        return if (misordered) "warning ($warning) should be $relation error ($error)" else null
     }
 }

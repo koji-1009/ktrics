@@ -24,8 +24,6 @@ class PackageMetricTest {
     ) : ProjectIndex {
         override val internalPackages: Set<String> = emptySet()
 
-        override fun typeByQName(qualifiedName: String): TypeDecl? = null
-
         override fun directSupertypeQNames(typeQName: String): List<String> = emptyList()
 
         override fun inheritanceResolution(typeQName: String): Resolution = Resolution.RESOLVED
@@ -35,8 +33,6 @@ class PackageMetricTest {
         override fun afferentPackagesOf(pkg: String): Set<String> = afferent[pkg].orEmpty()
 
         override fun efferentPackagesOf(pkg: String): Set<String> = efferent[pkg].orEmpty()
-
-        override fun typesInPackage(pkg: String): List<TypeDecl> = emptyList()
     }
 
     private fun pkg(

@@ -20,9 +20,11 @@ object SourceLines {
         return sloc
     }
 
-    // ktrics:dismiss cyclomatic-complexity reason="hand-rolled block-comment state machine; the branches are the states (in-block, line-comment start, block-comment open/close) and splitting them across helpers would obscure the single character-scan invariant"
-
-    /** Returns (lineContainsCode, inBlockCommentAfterLine). */
+    /**
+     * Returns (lineContainsCode, inBlockCommentAfterLine). Two states: inside a block comment the only
+     * interesting position is the close marker (one `indexOf`); outside it the scan watches for the two
+     * comment openers and any non-whitespace code character.
+     */
     private fun lineHasCode(
         line: String,
         startInBlock: Boolean,
@@ -31,28 +33,24 @@ object SourceLines {
         var sawCode = false
         var i = 0
         while (i < line.length) {
+            if (inBlock) {
+                val close = line.indexOf("*/", i)
+                if (close == -1) return sawCode to true // comment swallows the rest of the line
+                inBlock = false
+                i = close + 2
+                continue
+            }
             val c = line[i]
-            val next = line.getOrNull(i + 1)
             when {
-                inBlock -> {
-                    if (c == '*' && next == '/') {
-                        inBlock = false
-                        i += 2
-                        continue
-                    }
-                    i++
-                }
-                c == '/' && next == '/' -> return sawCode to false // rest of line is a line comment
-                c == '/' && next == '*' -> {
+                c == '/' && line.getOrNull(i + 1) == '/' -> return sawCode to false // rest of line is a line comment
+                c == '/' && line.getOrNull(i + 1) == '*' -> {
                     inBlock = true
                     i += 2
-                    continue
                 }
-                !c.isWhitespace() -> {
-                    sawCode = true
+                else -> {
+                    if (!c.isWhitespace()) sawCode = true
                     i++
                 }
-                else -> i++
             }
         }
         return sawCode to inBlock

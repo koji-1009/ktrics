@@ -190,6 +190,13 @@ open class KotlinClassifier : NodeClassifier {
             .map { it.getReferencedName() }
             .toSet()
 
+    // Same walk as fieldAccesses today, but a DISTINCT contract: fieldAccesses may later narrow to
+    // resolved instance-field accesses (LCOM4) while reachability must keep seeing every name read.
+    override fun referencedNames(scope: PsiElement): Set<String> =
+        scope.collectDescendantsOfType<KtNameReferenceExpression>()
+            .map { it.getReferencedName() }
+            .toSet()
+
     override fun tokens(scope: PsiElement): List<Token> =
         leaves(scope).mapNotNull { leaf ->
             if (leaf is PsiWhiteSpace || leaf is PsiComment) return@mapNotNull null
@@ -211,8 +218,6 @@ open class KotlinClassifier : NodeClassifier {
     override fun children(n: PsiElement): List<PsiElement> = generateSequence(n.firstChild) { it.nextSibling }.toList()
 
     override fun text(n: PsiElement): String = n.text
-
-    override fun isCommentOrWhitespace(n: PsiElement): Boolean = n is PsiWhiteSpace || n is PsiComment
 
     // A `when` entry is a decision point unless it is the `else` branch. Use the structural `isElse` flag,
     // not a text prefix — `startsWith("else")` wrongly excluded entries whose condition began with an

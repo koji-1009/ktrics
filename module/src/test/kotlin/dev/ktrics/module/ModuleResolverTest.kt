@@ -5,7 +5,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import java.io.File
 
-/** Path→module ownership and external-package classification, graph-defined not heuristic. */
+/** Path→module ownership, graph-defined not heuristic. */
 class ModuleResolverTest {
     private val projectRoot = File("/proj")
     private val graph =
@@ -54,12 +54,5 @@ class ModuleResolverTest {
         val home = System.getProperty("user.home")
         val r = ModuleResolver(ModuleGraph(listOf(ModuleNode("ext", srcRoots = listOf("~/libsrc")))), projectRoot)
         r.moduleOf(File("$home/libsrc/pkg/X.kt"))?.name shouldBe "ext"
-    }
-
-    @Test
-    fun `isExternalPackage is true exactly when no in-graph source declares the package`() {
-        val internal = setOf("com.app", "com.core")
-        resolver.isExternalPackage("java.util", internal) shouldBe true
-        resolver.isExternalPackage("com.app", internal) shouldBe false
     }
 }

@@ -3,9 +3,8 @@ package dev.ktrics.module
 import java.io.File
 
 /**
- * Maps an absolute source-file path to the module that owns it, and answers "is this package
- * external?" relative to the graph — the question Martin efferent coupling (Ce) turns on.
- * "External" is defined by the module graph, not by guesswork.
+ * Maps an absolute source-file path to the module that owns it. "External" is defined by the module
+ * graph, not by guesswork.
  *
  * Source roots are matched longest-first so a nested root (`app/src/main/kotlin`) wins over a
  * shorter overlapping one.
@@ -30,16 +29,6 @@ class ModuleResolver(
     }
 
     fun moduleOf(path: String): ModuleNode? = moduleOf(resolve(path))
-
-    /**
-     * Whether [packageName] is produced by no in-graph source module — i.e. it lives in a dependency
-     * JAR or the JDK. Requires the set of packages actually declared by project sources, which the
-     * engine collects during the IR pass. This keeps "external" graph-defined, never heuristic.
-     */
-    fun isExternalPackage(
-        packageName: String,
-        internalPackages: Set<String>,
-    ): Boolean = packageName !in internalPackages
 
     private fun resolve(path: String): File {
         val expanded =

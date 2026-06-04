@@ -29,19 +29,23 @@ class CommentDismissals(text: String) {
                 line.isEmpty() -> return null // blank line invalidates
                 line.startsWith("@") -> index-- // annotation in the preface — keep scanning upward past it
                 isComment(line) -> {
-                    if (DismissSyntax.isDirectiveLine(line)) {
-                        DismissSyntax.parseLine(line)?.let { (m, reason) ->
-                            if (m == null || m == metric) {
-                                return Dismissal(reason = reason, source = "comment", metric = m)
-                            }
-                        }
-                    }
-                    index-- // keep scanning the contiguous comment block upward
+                    dismissalIn(line, metric)?.let { return it }
+                    index-- // not this metric's directive: keep scanning the contiguous comment block upward
                 }
                 else -> return null // hit code; the directive (if any) wasn't in the preface
             }
         }
         return null
+    }
+
+    /** The dismissal one comment line carries for [metric]; null when it is no directive or targets another metric. */
+    private fun dismissalIn(
+        line: String,
+        metric: String,
+    ): Dismissal? {
+        if (!DismissSyntax.isDirectiveLine(line)) return null
+        val (m, reason) = DismissSyntax.parseLine(line) ?: return null
+        return if (m == null || m == metric) Dismissal(reason = reason, source = "comment", metric = m) else null
     }
 
     /**

@@ -37,33 +37,6 @@ data class ModuleGraph(
 
     fun module(name: String): ModuleNode? = byName[name]
 
-    /** Direct dependency nodes of [name], in declaration order. */
-    fun directDependencies(name: String): List<ModuleNode> = byName[name]?.dependsOn?.mapNotNull { byName[it] } ?: emptyList()
-
-    /** Transitive closure of dependencies of [name] (excluding itself), deepest-first stable order. */
-    fun transitiveDependencies(name: String): List<ModuleNode> {
-        // Post-order DFS: a dependency is appended only AFTER its own dependencies, so the deepest leaves
-        // come first and every module precedes the modules that depend on it (a valid topological order,
-        // e.g. for classpath assembly). The graph is acyclic (checked in init), and `result` doubles as
-        // the visited set so a diamond dependency is appended exactly once.
-        val result = LinkedHashSet<String>()
-
-        fun visit(n: String) {
-            byName[n]?.dependsOn?.forEach { d ->
-                if (d !in result) {
-                    visit(d)
-                    result.add(d)
-                }
-            }
-        }
-        visit(name)
-        return result.mapNotNull { byName[it] }
-    }
-
-    /** Modules that depend (transitively) on [name] — the downstream invalidation set. */
-    fun downstreamOf(name: String): List<ModuleNode> =
-        modules.filter { it.name != name && name in transitiveDependencies(it.name).map { d -> d.name } }
-
     private fun hasCycle(): Boolean = cyclePath() != null
 
     /** Returns a cyclic path if one exists, else null. */

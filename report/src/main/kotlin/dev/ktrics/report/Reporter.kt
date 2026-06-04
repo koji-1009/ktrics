@@ -57,23 +57,22 @@ object Actionability {
                 .thenBy { it.metricId },
         )
 
-    /** How far past the threshold, normalised so higher = more actionable regardless of polarity. */
-    private fun breachRatio(v: Violation): Double {
-        if (v.threshold == 0.0) {
-            // Ratio is undefined at threshold 0; map each polarity to the same ordering the
-            // non-zero branch produces (more-severe → larger), avoiding the divide-by-zero.
-            return when (v.polarity) {
-                // Any positive value breaches a 0 limit; severity grows with the value.
-                Polarity.LOWER_IS_BETTER -> v.value
-                // value <= 0 is the worst possible reading; larger value is less severe.
-                Polarity.HIGHER_IS_BETTER -> if (v.value <= 0.0) Double.MAX_VALUE else 1.0 / v.value
-                Polarity.INFORMATIONAL -> 0.0
-            }
-        }
-        return when (v.polarity) {
-            Polarity.LOWER_IS_BETTER -> v.value / v.threshold
-            Polarity.HIGHER_IS_BETTER -> if (v.value == 0.0) Double.MAX_VALUE else v.threshold / v.value
+    /**
+     * How far past the threshold, normalised so higher = more actionable regardless of polarity.
+     * Threshold 0 leaves the ratio undefined; each polarity maps to the same ordering the ratio
+     * produces (more-severe → larger), avoiding the divide-by-zero.
+     */
+    private fun breachRatio(v: Violation): Double =
+        when (v.polarity) {
             Polarity.INFORMATIONAL -> 0.0
+            // Any positive value breaches a 0 limit; severity grows with the value.
+            Polarity.LOWER_IS_BETTER -> if (v.threshold == 0.0) v.value else v.value / v.threshold
+            Polarity.HIGHER_IS_BETTER ->
+                when {
+                    // value <= 0 against a 0 limit is the worst possible reading; larger value is less severe.
+                    v.threshold == 0.0 -> if (v.value <= 0.0) Double.MAX_VALUE else 1.0 / v.value
+                    v.value == 0.0 -> Double.MAX_VALUE
+                    else -> v.threshold / v.value
+                }
         }
-    }
 }

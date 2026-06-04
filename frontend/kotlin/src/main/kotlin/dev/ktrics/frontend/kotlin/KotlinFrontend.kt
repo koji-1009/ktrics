@@ -118,10 +118,11 @@ class KotlinFrontend(
     private fun kindOf(decl: KtClassOrObject): TypeKind =
         when {
             decl is KtObjectDeclaration -> TypeKind.OBJECT
-            decl is KtClass && decl.isInterface() -> TypeKind.INTERFACE
-            decl is KtClass && decl.isEnum() -> TypeKind.ENUM
-            decl is KtClass && decl.isAnnotation() -> TypeKind.ANNOTATION
-            decl is KtClass && decl.isSealed() -> TypeKind.SEALED
+            decl !is KtClass -> TypeKind.CLASS // not an object and not a class declaration: plain CLASS
+            decl.isInterface() -> TypeKind.INTERFACE
+            decl.isEnum() -> TypeKind.ENUM
+            decl.isAnnotation() -> TypeKind.ANNOTATION
+            decl.isSealed() -> TypeKind.SEALED
             else -> TypeKind.CLASS
         }
 

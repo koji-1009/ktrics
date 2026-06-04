@@ -22,7 +22,12 @@ interface LanguageFrontend {
     fun lower(file: PsiElement): SourceUnit
 }
 
-/** Resolves the right [LanguageFrontend] for a parsed file. */
+/**
+ * Resolves the right [LanguageFrontend] for a parsed file or language. The engine wires its two
+ * frontends directly; this composition is consumed by :test-session's SessionFixture, which sits
+ * OUTSIDE the dogfood module graph — so the self-run `unused` lens reports the query methods.
+ * A deliberate keep, not dead code.
+ */
 class FrontendRegistry(private val frontends: List<LanguageFrontend>) {
     fun forFile(file: PsiElement): LanguageFrontend? = frontends.firstOrNull { it.accepts(file) }
 

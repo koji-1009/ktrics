@@ -145,6 +145,15 @@ class JavaClassifierTest {
     }
 
     @Test
+    fun `referenced names include value-level reads invisible to call and type extraction`() {
+        // JCoupled.first() reads field `dep` before invoking use(): the read is no call and no type
+        // position, so only referencedNames sees it (the unused detector's value-read channel).
+        val names = classifier.referencedNames(coupling.function("first").bodyNode!!)
+        names shouldContain "dep"
+        names shouldContain "use"
+    }
+
+    @Test
     fun `supertypes list the extends and implements references`() {
         val names = classifier.supertypes(coupling.type("JCoupled").node).map { it.name }
         names shouldContain "JBase"
@@ -166,9 +175,7 @@ class JavaClassifierTest {
     }
 
     @Test
-    fun `text returns the source and whitespace nodes are flagged`() {
-        val node = shapes.function("straight").node
-        classifier.text(node).contains("straight") shouldBe true
-        classifier.descendants(node).any { classifier.isCommentOrWhitespace(it) } shouldBe true
+    fun `text returns the source of a node`() {
+        classifier.text(shapes.function("straight").node).contains("straight") shouldBe true
     }
 }

@@ -77,6 +77,16 @@ interface NodeClassifier {
      */
     fun outgoingRefNames(scope: PsiElement): List<String> = calledSymbols(scope).map { it.name } + referencedTypes(scope).map { it.name }
 
+    /**
+     * Reachability: the simple names of every value-level name reference in [scope] — property/field
+     * reads, object/companion qualifiers, callable references. [calledSymbols]/[referencedTypes]
+     * deliberately cover only call expressions and type positions, so a read like `Config.DEFAULT`
+     * (no call, no type position) is invisible to them yet must keep `Config` alive in the unused
+     * detector. Name-based by design — the detector's reachability errs toward over-connecting.
+     * Defaults to empty: a classifier that doesn't opt in contributes no extra reachability edges.
+     */
+    fun referencedNames(scope: PsiElement): Set<String> = emptySet()
+
     /** DIT/NOC/abstractness: resolved supertypes of a type declaration. */
     fun supertypes(type: PsiElement): List<TypeRef>
 
@@ -104,7 +114,4 @@ interface NodeClassifier {
 
     /** Source text of [n], used for SLOC and snippet slicing. */
     fun text(n: PsiElement): String
-
-    /** True when [n] is whitespace or a comment — skipped by non-blank SLOC. */
-    fun isCommentOrWhitespace(n: PsiElement): Boolean
 }

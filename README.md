@@ -63,7 +63,8 @@ ktrics manual
 | `inspect <symbol>` | Walk the resolved call graph around a named declaration; `--depth` / `--direction up\|down\|both` configure the walk. |
 | `regression --before <ref> --after <ref>` | Compare metrics between two git states; classify each delta by polarity as improved / regressed / unchanged / added / removed. |
 | `report <input.json>` | Re-emit a previously saved JSON report in another format. |
-| `rules` | Catalogue every metric with rationale, refactor hints, and references. |
+| `rules` | Catalogue every metric, one line each with defaults and applicability. |
+| `explain <metric-id>` | Full rationale, refactor hints, and references for one metric. |
 | `ai-loop` | Operational playbook: commands, prompts, dismiss syntax — start here for agents (mirrors [`doc/ai-loop.md`](doc/ai-loop.md)). |
 | `manual` | Conceptual reference: lens design, decision tree, full flag catalogue (mirrors [`doc/manual.md`](doc/manual.md)). |
 | `doctor` | Validate `ktrics.yaml`. |

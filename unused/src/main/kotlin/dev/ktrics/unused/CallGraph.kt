@@ -26,11 +26,11 @@ class CallGraph private constructor(private val nodes: List<Node>) {
         val identity: String,
         /** Human-readable, param-less scope name, used for display and `inspect`/`signalOf` queries. */
         val key: String,
-        val simpleName: String,
         val kind: String,
         val file: String,
         val line: Int,
         val rawOut: List<String>,
+        val simpleName: String = key.substringAfterLast('.'),
     )
 
     // Edge resolution is by NAME (a call site carries no argument types), so both indices are
@@ -110,9 +110,6 @@ class CallGraph private constructor(private val nodes: List<Node>) {
      */
     fun signalOf(scopeName: String): CallGraphSignal? = byKey[scopeName]?.firstOrNull()?.let { signalByIdentity[it.identity] }
 
-    /** Every project-local declaration's signal — one per node, so every overload is reported. */
-    fun allSignals(): List<CallGraphSignal> = signalByIdentity.values.toList()
-
     /**
      * Walks the graph around every declaration whose name matches [query] (a bare `foo`, a dotted
      * `Type.method`, or a full qualified name), out to [depth] edges in the requested [direction].
@@ -167,19 +164,29 @@ class CallGraph private constructor(private val nodes: List<Node>) {
         val visited = hashSetOf(startIdentity)
         var frontier = listOf(startIdentity)
         for (d in 1..depth) {
-            val next = ArrayList<String>()
-            for (cur in frontier) {
-                for ((neighbor, weight) in neighborsOf(cur, forward)) {
-                    if (visited.add(neighbor)) {
-                        signalByIdentity[neighbor]?.let { result.add(InspectionNode(it, d, weight)) }
-                        next.add(neighbor)
-                    }
-                }
-            }
-            if (next.isEmpty()) break
-            frontier = next
+            frontier = expand(frontier, d, forward, visited, result)
+            if (frontier.isEmpty()) break
         }
         return result
+    }
+
+    /** One BFS level: visits every unseen neighbour of [frontier], records its signal, returns the next frontier. */
+    private fun expand(
+        frontier: List<String>,
+        depth: Int,
+        forward: Boolean,
+        visited: MutableSet<String>,
+        result: MutableList<InspectionNode>,
+    ): List<String> {
+        val next = ArrayList<String>()
+        for (cur in frontier) {
+            for ((neighbor, weight) in neighborsOf(cur, forward)) {
+                if (!visited.add(neighbor)) continue
+                signalByIdentity[neighbor]?.let { result.add(InspectionNode(it, depth, weight)) }
+                next.add(neighbor)
+            }
+        }
+        return next
     }
 
     /** (neighbour, edgeWeight) pairs: forward → callees of [identity]; reverse → callers of [identity]. */
@@ -211,26 +218,26 @@ class CallGraph private constructor(private val nodes: List<Node>) {
                 unit.topLevelFns.forEach { fn ->
                     val key = "${unit.packageName}.${fn.name}"
                     nodes +=
-                        node(
-                            key,
-                            fnIdentity(key, fn),
-                            "function",
-                            unit.path,
-                            fn.span.startLine,
-                            classifier.outgoingRefNames(fn.node),
+                        Node(
+                            identity = fnIdentity(key, fn),
+                            key = key,
+                            kind = "function",
+                            file = unit.path,
+                            line = fn.span.startLine,
+                            rawOut = classifier.outgoingRefNames(fn.node),
                         )
                 }
                 unit.topLevelProps.forEach { p ->
                     val key = "${unit.packageName}.${p.name}"
                     nodes +=
-                        node(
-                            key,
+                        Node(
                             // a property has no parameter signature; it cannot be overloaded
-                            key,
-                            "property",
-                            unit.path,
-                            p.span.startLine,
-                            classifier.outgoingRefNames(p.node),
+                            identity = key,
+                            key = key,
+                            kind = "property",
+                            file = unit.path,
+                            line = p.span.startLine,
+                            rawOut = classifier.outgoingRefNames(p.node),
                         )
                 }
                 unit.types.forEach { type -> collectType(type, unit, classifier, nodes) }
@@ -248,17 +255,25 @@ class CallGraph private constructor(private val nodes: List<Node>) {
             // A type is a call-graph TARGET (others reference it), not a source: its methods are
             // separate nodes that carry the outgoing edges. Collecting the whole type body here would
             // double-count every method's references and make the type spuriously "call" them.
-            into += node(qn, qn, type.kind.name.lowercase(), unit.path, type.span.startLine, emptyList())
+            into +=
+                Node(
+                    identity = qn,
+                    key = qn,
+                    kind = type.kind.name.lowercase(),
+                    file = unit.path,
+                    line = type.span.startLine,
+                    rawOut = emptyList(),
+                )
             type.methods.forEach { m ->
                 val key = "$qn.${m.name}"
                 into +=
-                    node(
-                        key,
-                        fnIdentity(key, m),
-                        "method",
-                        unit.path,
-                        m.span.startLine,
-                        classifier.outgoingRefNames(m.bodyNode ?: m.node),
+                    Node(
+                        identity = fnIdentity(key, m),
+                        key = key,
+                        kind = "method",
+                        file = unit.path,
+                        line = m.span.startLine,
+                        rawOut = classifier.outgoingRefNames(m.bodyNode ?: m.node),
                     )
             }
             type.nested.forEach { collectType(it, unit, classifier, into) }
@@ -273,24 +288,6 @@ class CallGraph private constructor(private val nodes: List<Node>) {
             key: String,
             fn: FunctionDecl,
         ): String = "$key(${fn.params.joinToString(",") { it.typeName }})"
-
-        private fun node(
-            key: String,
-            identity: String,
-            kind: String,
-            file: String,
-            line: Int,
-            rawOut: List<String>,
-        ): Node =
-            Node(
-                identity = identity,
-                key = key,
-                simpleName = key.substringAfterLast('.'),
-                kind = kind,
-                file = file,
-                line = line,
-                rawOut = rawOut,
-            )
 
         /** Normalises a raw reference text (which may be generic or nullable) to a simple name. */
         private fun simpleOf(raw: String): String =

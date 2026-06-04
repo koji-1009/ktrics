@@ -4,10 +4,10 @@
 
 complexity:
   LongParameterList:
-    # IR carriers (SourceUnit, TypeDecl, FunctionDecl, Violation, ...) and the unused-detector's declOf
-    # builder are wide data-shaping signatures by nature. detekt fires at value >= threshold, so
-    # allowing declOf's 12 params needs 13.
-    functionThreshold: 13
+    # IR carriers (SourceUnit, TypeDecl, FunctionDecl, Violation, ...) are wide data-shaping
+    # signatures by nature. detekt fires at value >= threshold, so allowing TypeDecl's 13
+    # constructor params needs 14; functions sit at detekt's default ceiling.
+    functionThreshold: 6
     constructorThreshold: 14
     ignoreDefaultParameters: true
     ignoreDataClasses: true
@@ -28,10 +28,7 @@ style:
     maxJumpCount: 3
   MaxLineLength:
     # Aligned with ktlint's 140 (the project's enforced limit) instead of detekt's stricter 120.
-    # Comment statements are excluded to match ktlint, which does not wrap an unsplittable dogfood
-    # dismiss-directive comment.
     maxLineLength: 140
-    excludeCommentStatements: true
   ReturnCount:
     # The codebase favours guard clauses / early returns over single-exit.
     max: 6

@@ -1,5 +1,6 @@
 package dev.ktrics.unused
 
+import com.intellij.psi.PsiElement
 import dev.ktrics.ir.Lang
 import dev.ktrics.ir.Resolution
 import dev.ktrics.ir.SourceUnit
@@ -54,6 +55,11 @@ data class UnusedReport(
  * Roots: `main`; JUnit `@Test`/`@ParameterizedTest`; configured reflection annotations; framework
  * stereotypes via presets. Visibility considered: Java public/protected; Kotlin public + internal.
  * Private is skipped (the compiler/IDE already covers it). Generated trees are skipped by default.
+ *
+ * Edges: call references and type-position references, a resolved call's CONTAINER (so a call keeps
+ * its owner object/class alive), value-level name reads ([NodeClassifier.referencedNames] — property
+ * reads and object qualifiers sit in no call/type position), and an implicit member → container edge
+ * (using a member implies using its enclosing type).
  */
 class UnusedDetector(
     private val units: List<SourceUnit>,
@@ -69,18 +75,24 @@ class UnusedDetector(
         val file: String,
         val span: Span,
         val lang: Lang,
-        val isMain: Boolean,
+        val outgoing: Set<String>,
+        /** Weakest resolution across this decl's outgoing call/type edges; null when it has none. */
+        val edgeResolution: Resolution?,
+        val isMain: Boolean = false,
         /**
          * True for a member that OVERRIDES a supertype member. An override of an out-of-project
          * supertype (Runnable.run, equals/hashCode, a framework callback) is reachable via the
          * runtime/framework even with no in-project caller, so it is seeded as a root — never reported
          * unused. Always false for types/properties.
          */
-        val isOverride: Boolean,
-        val topLevel: Boolean,
-        val outgoing: Set<String>,
-        /** Weakest resolution across this decl's outgoing edges; null when it has none. */
-        val edgeResolution: Resolution?,
+        val isOverride: Boolean = false,
+        val topLevel: Boolean = false,
+        /**
+         * False for declarations that participate in reachability but are never reported: type-level
+         * fields are graph nodes (an `Owner.CONST` read keeps `Owner` alive through them) while the
+         * reported surface stays what it has always been — top-level properties only.
+         */
+        val reportable: Boolean = true,
     )
 
     fun detect(): UnusedReport {
@@ -94,7 +106,8 @@ class UnusedDetector(
 
         val unused =
             decls.filter { d ->
-                isReportableSurface(d) &&
+                d.reportable &&
+                    isReportableSurface(d) &&
                     !isGenerated(d.file) &&
                     !isTest(d.file) &&
                     !isKeptAlive(d) &&
@@ -106,7 +119,7 @@ class UnusedDetector(
             unused = unused.sortedWith(compareBy({ it.file }, { it.span.startLine })),
             resolution = resolutionOf(decls),
             rootCount = roots.size,
-            consideredCount = decls.count { isReportableSurface(it) },
+            consideredCount = decls.count { it.reportable && isReportableSurface(it) },
         )
     }
 
@@ -115,39 +128,40 @@ class UnusedDetector(
             for (unit in units) {
                 val classifier = classifierFor(unit.lang)
                 unit.topLevelFns.forEach { fn ->
-                    val key = "${unit.packageName}.${fn.name}"
+                    val edges = edgesOf(classifier, fn.node)
                     add(
-                        declOf(
-                            key,
-                            "${fn.name}()",
-                            "function",
-                            fn.modifiers.visibility,
-                            fn.annotations,
-                            unit,
-                            fn.span,
-                            classifier,
-                            fn.node,
-                            fn.name == "main",
-                            fn.modifiers.isOverride,
+                        Decl(
+                            key = "${unit.packageName}.${fn.name}",
+                            displayName = "${fn.name}()",
+                            kind = "function",
+                            visibility = fn.modifiers.visibility,
+                            annotations = fn.annotations,
+                            file = unit.path,
+                            span = fn.span,
+                            lang = unit.lang,
+                            outgoing = edges.outgoing,
+                            edgeResolution = edges.resolution,
+                            isMain = fn.name == "main",
+                            isOverride = fn.modifiers.isOverride,
                             topLevel = true,
                         ),
                     )
                 }
                 unit.topLevelProps.forEach { p ->
+                    val edges = edgesOf(classifier, p.node)
                     add(
-                        declOf(
-                            "${unit.packageName}.${p.name}",
-                            p.name,
-                            "property",
-                            p.modifiers.visibility,
-                            p.annotations,
-                            unit,
-                            p.span,
-                            classifier,
-                            p.node,
-                            false,
-                            // a property is not seeded as an override root
-                            isOverride = false,
+                        // A property is not seeded as an override root: isMain/isOverride stay false.
+                        Decl(
+                            key = "${unit.packageName}.${p.name}",
+                            displayName = p.name,
+                            kind = "property",
+                            visibility = p.modifiers.visibility,
+                            annotations = p.annotations,
+                            file = unit.path,
+                            span = p.span,
+                            lang = unit.lang,
+                            outgoing = edges.outgoing,
+                            edgeResolution = edges.resolution,
                             topLevel = true,
                         ),
                     )
@@ -161,60 +175,82 @@ class UnusedDetector(
         unit: SourceUnit,
         classifier: NodeClassifier,
         topLevel: Boolean,
+        containerKey: String? = null,
     ) {
         val qn = type.qualifiedName ?: "${unit.packageName}.${type.name}"
+        val typeEdges = edgesOf(classifier, type.node)
         add(
-            declOf(
-                qn,
-                type.name,
-                type.kind.name.lowercase(),
-                type.modifiers.visibility,
-                type.annotations,
-                unit,
-                type.span,
-                classifier,
-                type.node,
-                false,
-                // a type itself is never an "override" root
-                isOverride = false,
-                topLevel,
-            ),
+            // A type itself is never an "override" root.
+            Decl(
+                key = qn,
+                displayName = type.name,
+                kind = type.kind.name.lowercase(),
+                visibility = type.modifiers.visibility,
+                annotations = type.annotations,
+                file = unit.path,
+                span = type.span,
+                lang = unit.lang,
+                outgoing = typeEdges.outgoing,
+                edgeResolution = typeEdges.resolution,
+                topLevel = topLevel,
+            ).reaching(containerKey),
         )
         type.methods.forEach { m ->
+            val edges = edgesOf(classifier, m.node)
             add(
-                declOf(
-                    "$qn.${m.name}",
-                    "${type.name}.${m.name}()",
-                    "method",
-                    m.modifiers.visibility,
-                    m.annotations,
-                    unit,
-                    m.span,
-                    classifier,
-                    m.node,
-                    m.name == "main",
-                    m.modifiers.isOverride,
-                    topLevel = false,
-                ),
+                Decl(
+                    key = "$qn.${m.name}",
+                    displayName = "${type.name}.${m.name}()",
+                    kind = "method",
+                    visibility = m.modifiers.visibility,
+                    annotations = m.annotations,
+                    file = unit.path,
+                    span = m.span,
+                    lang = unit.lang,
+                    outgoing = edges.outgoing,
+                    edgeResolution = edges.resolution,
+                    isMain = m.name == "main",
+                    isOverride = m.modifiers.isOverride,
+                ).reaching(qn),
             )
         }
-        type.nested.forEach { addType(it, unit, classifier, topLevel = false) }
+        type.fields.forEach { f ->
+            val edges = edgesOf(classifier, f.node)
+            add(
+                // Reachability node only (reportable = false): a `Owner.CONST` read must keep the
+                // companion/object alive, but type-level fields are not part of the reported surface.
+                Decl(
+                    key = "$qn.${f.name}",
+                    displayName = "${type.name}.${f.name}",
+                    kind = "property",
+                    visibility = f.modifiers.visibility,
+                    annotations = f.annotations,
+                    file = unit.path,
+                    span = f.span,
+                    lang = unit.lang,
+                    outgoing = edges.outgoing,
+                    edgeResolution = edges.resolution,
+                    reportable = false,
+                ).reaching(qn),
+            )
+        }
+        type.nested.forEach { addType(it, unit, classifier, topLevel = false, containerKey = qn) }
     }
 
-    private fun declOf(
-        key: String,
-        display: String,
-        kind: String,
-        visibility: Visibility,
-        annotations: List<String>,
-        unit: SourceUnit,
-        span: Span,
+    /**
+     * Using a member implies using its container: a member decl carries an explicit exact-key edge to
+     * [containerKey], so reaching `DaemonCli.runForeground` marks object `DaemonCli` reachable even
+     * when nothing references the container by name (e.g. a member imported directly).
+     */
+    private fun Decl.reaching(containerKey: String?): Decl = if (containerKey == null) this else copy(outgoing = outgoing + containerKey)
+
+    /** The outgoing edge set of one declaration scope, with the weakest call/type-edge resolution. */
+    private data class Edges(val outgoing: Set<String>, val resolution: Resolution?)
+
+    private fun edgesOf(
         classifier: NodeClassifier,
-        node: com.intellij.psi.PsiElement,
-        isMain: Boolean,
-        isOverride: Boolean,
-        topLevel: Boolean,
-    ): Decl {
+        node: PsiElement,
+    ): Edges {
         val called = classifier.calledSymbols(node)
         val types = classifier.referencedTypes(node)
         // Reachability is DELIBERATELY simple-name (a deliberate false-NEGATIVE bias, as the sibling
@@ -222,24 +258,20 @@ class UnusedDetector(
         // the concrete override, so precise (resolved-key) edges would report that override as dead —
         // a false positive that risks deleting live code. Over-connecting same-named symbols instead
         // errs toward keeping live code; the resolution STAMP below still gates the destructive --apply.
-        val outgoing = (called.map { it.name } + types.map { it.name }).toSet()
+        //
+        // Three channels feed the edge set:
+        //  - bare call/type names — the simple-name over-connection described above;
+        //  - call CONTAINERS — a resolved call also names its owner, so `DaemonCli.runForeground()`
+        //    keeps object `DaemonCli` alive, and a resolved constructor (named `<init>`, which matches
+        //    no declaration key) reaches its class only through this channel;
+        //  - referencedNames — value-level reads (property/field reads, object/companion qualifiers)
+        //    that are neither calls nor type positions. Name-based by construction and only ever ADDS
+        //    reachability (it cannot cause a wrong deletion), so it does not feed the resolution stamp.
+        val outgoing =
+            (called.map { it.name } + called.mapNotNull { it.container } + types.map { it.name } + classifier.referencedNames(node))
+                .toSet()
         val edgeResolutions = called.map { it.resolution } + types.map { it.resolution }
-        val edgeResolution = if (edgeResolutions.isEmpty()) null else Resolution.weakest(edgeResolutions)
-        return Decl(
-            key,
-            display,
-            kind,
-            visibility,
-            annotations,
-            unit.path,
-            span,
-            unit.lang,
-            isMain,
-            isOverride,
-            topLevel,
-            outgoing,
-            edgeResolution,
-        )
+        return Edges(outgoing, if (edgeResolutions.isEmpty()) null else Resolution.weakest(edgeResolutions))
     }
 
     private fun bfs(
@@ -252,20 +284,28 @@ class UnusedDetector(
         roots.forEach { if (reachable.add(it.key)) queue.add(it) }
         while (queue.isNotEmpty()) {
             val decl = queue.removeFirst()
-            for (ref in decl.outgoing) {
-                // Exact (resolved, qualified) key match first; else fall back to the SIMPLE name — a
-                // resolved key is `pkg.Owner.member`, and the simple-name index is keyed by the bare
-                // member, so we must strip to the last segment. Reachability errs toward over-connecting
-                // (a missed edge would wrongly report live code as unused; `--apply` is gated on RESOLVED).
-                // The simple-name fallback INTENTIONALLY over-approximates: a qualified off-project ref
-                // like `kotlin.run` here marks a project `run` reachable. That under-reports dead code but
-                // never flags live code — the safe direction for a deletion tool — so it stays as-is.
-                val targets = byKey[ref]?.let { listOf(it) } ?: bySimple[ref.substringAfterLast('.')].orEmpty()
-                for (t in targets) if (reachable.add(t.key)) queue.add(t)
+            val targets = decl.outgoing.flatMap { targetsOf(it, byKey, bySimple) }
+            for (t in targets) {
+                if (reachable.add(t.key)) queue.add(t)
             }
         }
         return reachable
     }
+
+    /**
+     * Exact (resolved, qualified) key match first; else fall back to the SIMPLE name — a resolved key
+     * is `pkg.Owner.member`, and the simple-name index is keyed by the bare member, so we must strip
+     * to the last segment. Reachability errs toward over-connecting (a missed edge would wrongly
+     * report live code as unused; `--apply` is gated on RESOLVED). The simple-name fallback
+     * INTENTIONALLY over-approximates: a qualified off-project ref like `kotlin.run` here marks a
+     * project `run` reachable. That under-reports dead code but never flags live code — the safe
+     * direction for a deletion tool — so it stays as-is.
+     */
+    private fun targetsOf(
+        ref: String,
+        byKey: Map<String, Decl>,
+        bySimple: Map<String, List<Decl>>,
+    ): List<Decl> = byKey[ref]?.let { listOf(it) } ?: bySimple[ref.substringAfterLast('.')].orEmpty()
 
     private fun isRoot(d: Decl): Boolean {
         if (d.isMain && "main" in config.entryPoints) return true

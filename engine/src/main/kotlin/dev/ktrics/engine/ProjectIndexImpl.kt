@@ -57,13 +57,6 @@ class ProjectIndexImpl(units: List<SourceUnit>) : ProjectIndex {
             }
         }
 
-    private val typesByPackage: Map<String, List<TypeDecl>> =
-        units
-            .groupBy { it.packageName }
-            .mapValues { (_, us) -> us.flatMap { it.types } }
-
-    override fun typeByQName(qualifiedName: String): TypeDecl? = typeByQn[qualifiedName]
-
     override fun directSupertypeQNames(typeQName: String): List<String> = supertypeQns[typeQName].orEmpty()
 
     /** Name-based until resolution is turned on: report NAME_BASED unless every super resolved in-project. */
@@ -79,11 +72,6 @@ class ProjectIndexImpl(units: List<SourceUnit>) : ProjectIndex {
     override fun afferentPackagesOf(pkg: String): Set<String> = afferent[pkg].orEmpty()
 
     override fun efferentPackagesOf(pkg: String): Set<String> = efferent[pkg].orEmpty()
-
-    override fun typesInPackage(pkg: String): List<TypeDecl> = typesByPackage[pkg].orEmpty()
-
-    /** All distinct package names that hold at least one type (drives the package-metric pass). */
-    fun packageNames(): Set<String> = typesByPackage.keys
 
     /** Resolve a simple supertype name to an in-project qname via same package, then imports. */
     private fun resolveSimpleName(

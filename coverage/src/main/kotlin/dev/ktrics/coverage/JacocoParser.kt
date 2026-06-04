@@ -36,7 +36,7 @@ object JacocoParser {
             for (j in 0 until methods.length) {
                 val methodEl = methods.item(j) as? Element ?: continue
                 if (methodEl.parentNode !== classEl) continue // only direct method children of this class
-                val methodName = methodEl.getAttribute("name").let { if (it == "<init>") "<init>" else it }
+                val methodName = methodEl.getAttribute("name") // JaCoCo's `<init>` matches the IR constructor name as-is
                 // The IR scope key is unsignatured (`Owner.method`), so overloads share one key. JaCoCo
                 // emits a separate <method> per overload (disambiguated by `desc`); aggregate their
                 // counters instead of letting the last one silently overwrite the rest.

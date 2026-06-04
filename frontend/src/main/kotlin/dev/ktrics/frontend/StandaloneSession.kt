@@ -3,9 +3,11 @@ package dev.ktrics.frontend
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiJavaFile
 import dev.ktrics.module.ModuleGraph
+import org.jetbrains.kotlin.analysis.api.projectStructure.KaLibraryModule
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaModule
 import org.jetbrains.kotlin.analysis.api.standalone.StandaloneAnalysisAPISession
 import org.jetbrains.kotlin.analysis.api.standalone.buildStandaloneAnalysisAPISession
+import org.jetbrains.kotlin.analysis.project.structure.builder.KtModuleProviderBuilder
 import org.jetbrains.kotlin.analysis.project.structure.builder.buildKtLibraryModule
 import org.jetbrains.kotlin.analysis.project.structure.builder.buildKtSdkModule
 import org.jetbrains.kotlin.analysis.project.structure.builder.buildKtSourceModule
@@ -92,14 +94,7 @@ object StandaloneSessionFactory {
                     // name-based edges, which then over-link by simple name in the call graph. It is
                     // universally required (unlike a project's own dependencies), so we always supply it
                     // from the daemon's own runtime rather than requiring it in every module's classpath.
-                    val stdlibModule =
-                        stdlibJar?.let { jar ->
-                            buildKtLibraryModule {
-                                this.platform = JvmPlatforms.defaultJvmPlatform
-                                addBinaryRoot(jar.toPath())
-                                libraryName = "kotlin-stdlib"
-                            }.also { addModule(it) }
-                        }
+                    val stdlibModule = stdlibModuleOrNull(stdlibJar)
 
                     // Two passes so dependency edges can reference already-built modules. The graph is a
                     // DAG (validated in ModuleGraph), so a topological order exists.
@@ -140,6 +135,16 @@ object StandaloneSessionFactory {
                 }
             }
         return KtricsSession(api, kaModules)
+    }
+
+    /** Builds + registers the kotlin-stdlib library module; null when the daemon's stdlib jar wasn't located. */
+    private fun KtModuleProviderBuilder.stdlibModuleOrNull(stdlibJar: File?): KaLibraryModule? {
+        if (stdlibJar == null) return null
+        return buildKtLibraryModule {
+            this.platform = JvmPlatforms.defaultJvmPlatform
+            addBinaryRoot(stdlibJar.toPath())
+            libraryName = "kotlin-stdlib"
+        }.also { addModule(it) }
     }
 
     /** The Kotlin stdlib jar, located from the daemon's own runtime (kotlin.Unit lives in it). */

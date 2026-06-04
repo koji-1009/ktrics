@@ -73,16 +73,13 @@ object Regression {
         before: Double?,
         after: Double?,
         polarity: Polarity,
-    ): Change =
-        when {
-            before == null && after != null -> Change.ADDED
-            before != null && after == null -> Change.REMOVED
-            before == after -> Change.UNCHANGED
-            before == null || after == null -> Change.UNCHANGED
-            polarity == Polarity.INFORMATIONAL -> Change.UNCHANGED
-            polarity == Polarity.LOWER_IS_BETTER -> if (after < before) Change.IMPROVED else Change.REGRESSED
-            else -> if (after > before) Change.IMPROVED else Change.REGRESSED // HIGHER_IS_BETTER
-        }
+    ): Change {
+        if (before == null) return if (after == null) Change.UNCHANGED else Change.ADDED
+        if (after == null) return Change.REMOVED
+        if (before == after || polarity == Polarity.INFORMATIONAL) return Change.UNCHANGED
+        val improved = if (polarity == Polarity.LOWER_IS_BETTER) after < before else after > before // else: HIGHER_IS_BETTER
+        return if (improved) Change.IMPROVED else Change.REGRESSED
+    }
 
     /** tinyHelpersAdded ≥ 3 AND slocDelta > 4·helpers AND ccReduction < 2·helpers. */
     private fun detectCosmeticRefactor(

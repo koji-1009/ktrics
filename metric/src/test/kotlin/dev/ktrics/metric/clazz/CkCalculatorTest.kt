@@ -153,8 +153,6 @@ class CkCalculatorTest {
         private val children = mapOf("p.Base" to 2, "p.Mid" to 1)
         override val internalPackages: Set<String> = setOf("p")
 
-        override fun typeByQName(qualifiedName: String): TypeDecl? = null
-
         override fun directSupertypeQNames(typeQName: String): List<String> = supers[typeQName].orEmpty()
 
         override fun inheritanceResolution(typeQName: String): Resolution = Resolution.RESOLVED
@@ -164,8 +162,6 @@ class CkCalculatorTest {
         override fun afferentPackagesOf(pkg: String): Set<String> = emptySet()
 
         override fun efferentPackagesOf(pkg: String): Set<String> = emptySet()
-
-        override fun typesInPackage(pkg: String): List<TypeDecl> = emptyList()
     }
 
     private fun leafType(qn: String): TypeDecl =

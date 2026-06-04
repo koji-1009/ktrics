@@ -11,6 +11,7 @@ import com.intellij.psi.PsiForStatement
 import com.intellij.psi.PsiForeachStatement
 import com.intellij.psi.PsiIdentifier
 import com.intellij.psi.PsiIfStatement
+import com.intellij.psi.PsiJavaCodeReferenceElement
 import com.intellij.psi.PsiLambdaExpression
 import com.intellij.psi.PsiLiteralExpression
 import com.intellij.psi.PsiMethod
@@ -191,6 +192,15 @@ open class JavaClassifier : NodeClassifier {
             .mapNotNull { it.referenceName }
             .toSet()
 
+    // PsiJavaCodeReferenceElement (the supertype of PsiReferenceExpression) also covers class
+    // references outside expression position (`Foo.class`, qualifiers of `new Foo.Bar()`), which a
+    // field/method walk misses. A DISTINCT contract from fieldAccesses: that one may later narrow to
+    // resolved instance-field accesses (LCOM4) while reachability must keep seeing every name read.
+    override fun referencedNames(scope: PsiElement): Set<String> =
+        PsiTreeUtil.collectElementsOfType(scope, PsiJavaCodeReferenceElement::class.java)
+            .mapNotNull { it.referenceName }
+            .toSet()
+
     override fun tokens(scope: PsiElement): List<Token> =
         leaves(scope).mapNotNull { leaf ->
             if (leaf is PsiWhiteSpace || leaf is PsiComment) return@mapNotNull null
@@ -206,8 +216,6 @@ open class JavaClassifier : NodeClassifier {
     override fun children(n: PsiElement): List<PsiElement> = generateSequence(n.firstChild) { it.nextSibling }.toList()
 
     override fun text(n: PsiElement): String = n.text
-
-    override fun isCommentOrWhitespace(n: PsiElement): Boolean = n is PsiWhiteSpace || n is PsiComment
 
     // --- Java PSI helpers ---
 

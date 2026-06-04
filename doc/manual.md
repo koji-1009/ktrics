@@ -16,6 +16,7 @@ A tiny native-image client (`ktrics`) relays your command to a warm JVM daemon (
 | `ktrics regression --before <ref> --after <ref>` | per-scope per-metric diff classified by polarity |
 | `ktrics report <input.json>` | re-emit a saved JSON report in another format |
 | `ktrics rules` | the full metric catalogue |
+| `ktrics explain <metric-id>` | full rationale, refactor hints and references for one metric |
 | `ktrics manual` | this manual |
 | `ktrics ai-loop` | the loop walkthrough |
 | `ktrics doctor` | validate `ktrics.yaml` |

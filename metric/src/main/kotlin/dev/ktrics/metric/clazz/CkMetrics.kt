@@ -1,5 +1,6 @@
 package dev.ktrics.metric.clazz
 
+import com.intellij.psi.PsiElement
 import dev.ktrics.ir.FunctionDecl
 import dev.ktrics.ir.Resolution
 import dev.ktrics.ir.TypeDecl
@@ -126,13 +127,13 @@ class Lcom4 : TypeMetric {
         val uf = UnionFind(methods.size)
         val accessedFields =
             methods.map { m ->
-                c.fieldAccesses(m.bodyNode ?: m.node).intersect(fieldNames)
+                c.fieldAccesses(scopeOf(m)).intersect(fieldNames)
             }
         // Signatures of sibling overloads reachable from each method, expanding every called simple name
         // to all same-named overloads (call sites lack the arg types needed to pick one).
         val calledSiblingSignatures =
             methods.map { m ->
-                c.calledSymbols(m.bodyNode ?: m.node)
+                c.calledSymbols(scopeOf(m))
                     .flatMap { call -> signaturesByName[call.name].orEmpty() }
                     .map { signatures[it] }
                     .toSet()
@@ -147,6 +148,9 @@ class Lcom4 : TypeMetric {
 
     /** Stable per-overload key: name + parameter type names, so overloads sharing a name stay distinct. */
     private fun signatureKey(m: FunctionDecl): String = "${m.name}(${m.params.joinToString(",") { it.typeName }})"
+
+    /** The scope a method's accesses/calls are read from: its body when present, else the whole declaration. */
+    private fun scopeOf(m: FunctionDecl): PsiElement = m.bodyNode ?: m.node
 
     /** Two methods are connected when they share an accessed field OR one calls the other. */
     private fun connected(

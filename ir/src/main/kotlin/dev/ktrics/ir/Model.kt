@@ -47,7 +47,12 @@ class SourceUnit(
     /** Depth-first walk of every type including nested ones. */
     fun allTypes(): Sequence<TypeDecl> = types.asSequence().flatMap { it.selfAndNested() }
 
-    /** Every function anywhere in the unit: top-level + each type's methods (recursively). */
+    /**
+     * Every function anywhere in the unit: top-level + each type's methods (recursively).
+     * Consumed by :test-session's SessionFixture, which sits OUTSIDE the dogfood module graph
+     * (ktrics.yaml omits the fixture modules), so the self-run `unused` lens reports this —
+     * a deliberate keep, not dead code.
+     */
     fun allFunctions(): Sequence<FunctionDecl> = topLevelFns.asSequence() + allTypes().flatMap { it.methods.asSequence() }
 }
 

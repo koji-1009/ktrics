@@ -27,9 +27,6 @@ interface ProjectIndex {
     /** Packages produced by in-graph source modules; everything else is external (Martin Ce). */
     val internalPackages: Set<String>
 
-    /** The in-project type declaration for a qualified name, or null when external/unresolved. */
-    fun typeByQName(qualifiedName: String): TypeDecl?
-
     /** Resolved qualified names of the DIRECT supertypes of [typeQName] (DIT/NOC traversal). */
     fun directSupertypeQNames(typeQName: String): List<String>
 
@@ -44,9 +41,6 @@ interface ProjectIndex {
 
     /** Ce: distinct external packages imported by [pkg] (external per the module graph). */
     fun efferentPackagesOf(pkg: String): Set<String>
-
-    /** Every type declared in [pkg], across all units (abstractness A). */
-    fun typesInPackage(pkg: String): List<TypeDecl>
 }
 
 /** A metric measured per function/method. Purely syntactic — no resolution. */

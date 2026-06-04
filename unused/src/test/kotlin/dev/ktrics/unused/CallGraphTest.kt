@@ -3,7 +3,6 @@ package dev.ktrics.unused
 import dev.ktrics.ir.TypeKind
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContainExactly
-import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
@@ -21,13 +20,6 @@ class CallGraphTest {
         val targetSignal = g.signalOf("pkg.target")!!
         targetSignal.fanInCallers shouldBe 1
         targetSignal.fanInCalls shouldBe 3
-    }
-
-    @Test
-    fun `allSignals returns one signal per project-local declaration`() {
-        val c = FakeClassifier()
-        val g = CallGraph.build(listOf(unit(fns = listOf(c.fn("a"), c.fn("b")))), { c })
-        g.allSignals().map { it.scopeName } shouldContainExactlyInAnyOrder listOf("pkg.a", "pkg.b")
     }
 
     @Test

@@ -97,8 +97,6 @@ class NodeClassifierDefaultsTest {
         override fun tokens(scope: PsiElement): List<Token> = emptyList()
 
         override fun text(n: PsiElement): String = ""
-
-        override fun isCommentOrWhitespace(n: PsiElement): Boolean = false
     }
 
     @Test
@@ -132,6 +130,12 @@ class NodeClassifierDefaultsTest {
         val scope = c.node(calls = listOf("doWork", "log"), types = listOf("Service", "Logger"))
         // The default concatenates the two deduped lists (call names first), losing multiplicity.
         c.outgoingRefNames(scope) shouldContainExactly listOf("doWork", "log", "Service", "Logger")
+    }
+
+    @Test
+    fun `referencedNames defaults to empty`() {
+        // The value-read channel is opt-in; a classifier that doesn't override adds no reachability edges.
+        TreeClassifier().referencedNames(stubNode()) shouldBe emptySet<String>()
     }
 
     @Test

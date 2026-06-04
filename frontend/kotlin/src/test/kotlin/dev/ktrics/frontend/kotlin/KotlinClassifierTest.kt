@@ -120,13 +120,6 @@ class KotlinClassifierTest {
         tokens.any { it.kind == dev.ktrics.ir.TokenKind.OPERATOR } shouldBe true
     }
 
-    @Test
-    fun `comment and whitespace nodes are skipped by sloc`() {
-        // The classifier flags whitespace/comment PSI; at least the leading whitespace of a body qualifies.
-        val body = shapes.function("straight").bodyNode!!
-        classifier.descendants(body).any { classifier.isCommentOrWhitespace(it) } shouldBe true
-    }
-
     // --- npath / loop helpers ---
 
     @Test
@@ -176,6 +169,15 @@ class KotlinClassifierTest {
         // The flat call-graph feed (callee names ++ type-reference names) over one scope.
         val names = classifier.outgoingRefNames(coupling.function("first").bodyNode!!)
         names shouldContain "second"
+    }
+
+    @Test
+    fun `referenced names include value-level reads invisible to call and type extraction`() {
+        // Coupled.third() reads property `b` before invoking pong(): the read is no call and no type
+        // position, so only referencedNames sees it (the unused detector's value-read channel).
+        val names = classifier.referencedNames(coupling.function("third").bodyNode!!)
+        names shouldContain "b"
+        names shouldContain "pong"
     }
 
     @Test

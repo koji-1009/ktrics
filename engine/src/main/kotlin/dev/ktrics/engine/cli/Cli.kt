@@ -139,6 +139,7 @@ object CommandRegistry {
         into["analyze"] = dev.ktrics.engine.cli.commands.AnalyzeCommand
         into["report"] = dev.ktrics.engine.cli.commands.ReportCommand
         into["rules"] = dev.ktrics.engine.cli.commands.RulesCommand
+        into["explain"] = dev.ktrics.engine.cli.commands.ExplainCommand
         into["inspect"] = dev.ktrics.engine.cli.commands.InspectCommand
         into["manual"] = dev.ktrics.engine.cli.commands.DocCommand.MANUAL
         into["ai-loop"] = dev.ktrics.engine.cli.commands.DocCommand.AI_LOOP

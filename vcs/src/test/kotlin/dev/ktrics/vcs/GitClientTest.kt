@@ -2,7 +2,6 @@ package dev.ktrics.vcs
 
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.collections.shouldContain
-import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -16,7 +15,7 @@ import kotlin.io.path.createTempDirectory
 /**
  * GitClient against a real temporary repository. Environment-dependent (needs `git` on
  * PATH) — skipped when git is absent. Exercises the stdout/stderr drain on
- * real `git diff`/`show`/`worktree` round-trips.
+ * real `git diff`/`worktree` round-trips.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class GitClientTest {
@@ -88,13 +87,6 @@ class GitClientTest {
     }
 
     @Test
-    fun `fileAt returns the contents at a ref and null for a missing path`() {
-        val client = GitClient(repo)
-        client.fileAt(firstSha, "a.txt") shouldBe "one\n"
-        client.fileAt(firstSha, "ghost.txt").shouldBeNull()
-    }
-
-    @Test
     fun `a worktree can be added and removed`() {
         val client = GitClient(repo)
         val wt = File(repo.parentFile, repo.name + "-wt")
@@ -117,14 +109,6 @@ class GitClientTest {
         } finally {
             File(repo, "dirty.txt").delete()
         }
-    }
-
-    @Test
-    fun `changedFilesBetween lists files that differ across two refs`() {
-        // a.txt changed between the first and second commits; b.txt did not.
-        val changed = GitClient(repo).changedFilesBetween(firstSha, "HEAD")
-        changed shouldContain "a.txt"
-        changed.contains("b.txt") shouldBe false
     }
 
     @Test

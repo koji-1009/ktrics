@@ -180,7 +180,7 @@ class CliCommandsTest {
     @Test
     fun `the default cli wires every shipped command and rejects unknown ones`() {
         val cli = Cli.default()
-        listOf("analyze", "report", "rules", "inspect", "manual", "ai-loop", "doctor", "regression", "unused")
+        listOf("analyze", "report", "rules", "explain", "inspect", "manual", "ai-loop", "doctor", "regression", "unused")
             .forEach { cli.supports(it) shouldBe true }
         cli.supports("frobnicate") shouldBe false
 
@@ -197,6 +197,28 @@ class CliCommandsTest {
         val sink = CapturingSink()
         RulesCommand.run(ctx(File("."), sink = sink)) shouldBe Exit.OK
         sink.out.toString() shouldContain "metric catalogue"
+    }
+
+    @Test
+    fun `explain prints the full auto-explain for a metric id`() {
+        val sink = CapturingSink()
+        ExplainCommand.run(ctx(File("."), "cyclomatic-complexity", sink = sink)) shouldBe Exit.OK
+        sink.out.toString() shouldContain "rationale"
+        sink.out.toString() shouldContain "cyclomatic-complexity"
+    }
+
+    @Test
+    fun `explain without a metric id is a usage error`() {
+        val sink = CapturingSink()
+        ExplainCommand.run(ctx(File("."), sink = sink)) shouldBe Exit.USAGE
+        sink.err.toString() shouldContain "usage"
+    }
+
+    @Test
+    fun `explain on an unknown metric id is a usage error pointing at rules`() {
+        val sink = CapturingSink()
+        ExplainCommand.run(ctx(File("."), "not-a-metric", sink = sink)) shouldBe Exit.USAGE
+        sink.err.toString() shouldContain "unknown metric"
     }
 
     @Test

@@ -41,6 +41,11 @@ internal fun stubNode(): PsiElement =
 internal class FakeClassifier : NodeClassifier {
     private val calls = IdentityHashMap<PsiElement, List<String>>()
     private val types = IdentityHashMap<PsiElement, List<String>>()
+    private val names = IdentityHashMap<PsiElement, Set<String>>()
+
+    // A call name → container key map per node, mimicking a RESOLVED SymbolRef's owner (the channel
+    // that keeps an object alive when only its member is called, and a class alive via `<init>`).
+    private val callContainers = IdentityHashMap<PsiElement, Map<String, String>>()
 
     // Call- and type-edge resolution are tracked SEPARATELY so a decl can carry a resolved type edge AND a
     // name-based call edge — the exact shape that resolutionOf's sweep coverage defends.
@@ -53,10 +58,14 @@ internal class FakeClassifier : NodeClassifier {
         types: List<String>,
         callResolution: Resolution,
         typeResolution: Resolution = callResolution,
+        names: Set<String> = emptySet(),
+        callContainers: Map<String, String> = emptyMap(),
     ): PsiElement {
         val n = stubNode()
         this.calls[n] = calls
         this.types[n] = types
+        this.names[n] = names
+        this.callContainers[n] = callContainers
         this.callResolution[n] = callResolution
         this.typeResolution[n] = typeResolution
         return n
@@ -65,10 +74,14 @@ internal class FakeClassifier : NodeClassifier {
     override fun outgoingRefNames(scope: PsiElement): List<String> = calls[scope].orEmpty() + types[scope].orEmpty()
 
     override fun calledSymbols(scope: PsiElement): List<SymbolRef> =
-        calls[scope].orEmpty().map { SymbolRef(it, null, callResolution[scope] ?: Resolution.NAME_BASED) }
+        calls[scope].orEmpty().map {
+            SymbolRef(it, callContainers[scope]?.get(it), callResolution[scope] ?: Resolution.NAME_BASED)
+        }
 
     override fun referencedTypes(scope: PsiElement): List<TypeRef> =
         types[scope].orEmpty().map { TypeRef(it, null, null, typeResolution[scope] ?: Resolution.NAME_BASED) }
+
+    override fun referencedNames(scope: PsiElement): Set<String> = names[scope].orEmpty()
 
     override fun supertypes(type: PsiElement): List<TypeRef> = emptyList()
 
@@ -85,8 +98,6 @@ internal class FakeClassifier : NodeClassifier {
     override fun children(n: PsiElement): List<PsiElement> = emptyList()
 
     override fun text(n: PsiElement): String = ""
-
-    override fun isCommentOrWhitespace(n: PsiElement): Boolean = false
 
     override fun isDecisionPoint(n: PsiElement): Boolean = false
 
@@ -109,8 +120,10 @@ internal fun FakeClassifier.fn(
     callResolution: Resolution = resolution,
     typeResolution: Resolution = resolution,
     lang: Lang = Lang.KOTLIN,
+    names: Set<String> = emptySet(),
+    callContainers: Map<String, String> = emptyMap(),
 ): FunctionDecl {
-    val n = register(calls, types, callResolution, typeResolution)
+    val n = register(calls, types, callResolution, typeResolution, names, callContainers)
     return FunctionDecl(name, emptyList(), Modifiers(visibility), annotations, SPAN, n, n, lang)
 }
 
@@ -129,13 +142,14 @@ internal fun FakeClassifier.type(
     pkg: String = "pkg",
     methods: List<FunctionDecl> = emptyList(),
     nested: List<TypeDecl> = emptyList(),
+    fields: List<FieldDecl> = emptyList(),
     kind: TypeKind = TypeKind.CLASS,
     visibility: Visibility = Visibility.PUBLIC,
     lang: Lang = Lang.KOTLIN,
 ): TypeDecl {
     val n = register(emptyList(), emptyList(), Resolution.NAME_BASED)
     return TypeDecl(
-        kind, name, "$pkg.$name", false, emptyList(), emptyList(), methods, nested,
+        kind, name, "$pkg.$name", false, emptyList(), fields, methods, nested,
         Modifiers(
             visibility,
         ),

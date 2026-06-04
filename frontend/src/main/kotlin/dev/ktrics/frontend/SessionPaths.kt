@@ -1,5 +1,6 @@
 package dev.ktrics.frontend
 
+import dev.ktrics.ir.Lang
 import dev.ktrics.module.ModuleGraph
 import dev.ktrics.module.ModuleNode
 import dev.ktrics.module.SourceFilter
@@ -27,19 +28,20 @@ class SessionPaths(
 
     fun resolve(node: ModuleNode): ResolvedModule {
         val roots = node.srcRoots.map { absolute(it) }
-        val kotlin = roots.flatMap { collect(it, KOTLIN_EXTS) }
-        val java = roots.flatMap { collect(it, JAVA_EXTS) }
+        val kotlin = roots.flatMap { collect(it, Lang.KOTLIN) }
+        val java = roots.flatMap { collect(it, Lang.JAVA) }
         val cp = node.classpath.map { absolute(it) }.filter { it.exists() }
         return ResolvedModule(node, kotlin.sorted(), java.sorted(), cp)
     }
 
     private fun collect(
         root: File,
-        exts: Set<String>,
+        lang: Lang,
     ): List<File> {
         if (!root.exists()) return emptyList()
         return root.walkTopDown()
-            .filter { it.isFile && it.extension.lowercase() in exts && !SourceFilter.isBuildScript(it.name) }
+            // Lang.fromExtension is the one extension → language mapping, shared with the IR.
+            .filter { it.isFile && Lang.fromExtension(it.extension) == lang && !SourceFilter.isBuildScript(it.name) }
             .toList()
     }
 
@@ -50,9 +52,4 @@ class SessionPaths(
     }
 
     private fun List<File>.sorted(): List<File> = sortedBy { it.path }
-
-    companion object {
-        val KOTLIN_EXTS = setOf("kt", "kts")
-        val JAVA_EXTS = setOf("java")
-    }
 }
