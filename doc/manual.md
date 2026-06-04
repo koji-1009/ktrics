@@ -37,6 +37,8 @@ Command-specific: `inspect` takes `--depth <n>` (default 2) and `--direction up|
 
 Resolution is **on by default within the project**; external edges need the classpath. A reference into a dependency that isn't on the classpath degrades *that single edge* to name-based, flagged via the `resolution` field on every coupling/cohesion result. In-project and cross-language (Kotlin↔Java) edges resolve without a build.
 
+Resolution is what the analysis stands on — it is why the embedded platform is worth its weight. With it, coupling/cohesion/inheritance lenses count the declarations a reference *actually* targets (not same-name guesses), `unused` is a reachability sweep over the resolved reference graph spanning modules and the Kotlin↔Java boundary, and `inspect` walks a resolved call graph. Without it, every one of those answers degrades to name matching — which is why the degradation is stamped per measurement instead of hidden, and why destructive operations (`unused --apply`) require a fully RESOLVED sweep.
+
 ## Loop modes
 
 - **Persistent mode (default; local agents):** the daemon stays warm across tool calls → near-native iteration. This is the happy path.

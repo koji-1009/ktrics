@@ -13,6 +13,14 @@ ktrics computes a battery of code-quality metrics — McCabe, Cognitive Complexi
 
 ktrics **measures, it does not gate.** Each metric is an independent *lens* anchored to a primary source; accept / refactor / dismiss stays in your loop. No metric blocks another. By default the **function-level** lenses fire as warnings; the class- and package-level lenses are **measure-only** (set a threshold in `ktrics.yaml` to gate them) — this keeps the failing set tight and actionable.
 
+### Resolution-backed by design
+
+Embedding the analysis host carries a real maintenance cost (see [Limitations](#limitations)). It is a deliberate trade, because resolution is what the analysis stands on:
+
+- **Semantic measurements, not name matching.** A reference resolves to the declaration it actually targets — across files, across modules, and across the Kotlin↔Java boundary, with no build step. Coupling, cohesion, and inheritance lenses (CBO, RFC, LCOM4, DIT/NOC, Martin) count resolved edges instead of same-name guesses.
+- **Reachability, not text search.** `unused` is a breadth-first sweep from entry points (`main`, `@Test`, configured annotations) over the resolved reference graph, spanning module-dependency edges — a public symbol used only from another module, or only from the other language, is reachable. `inspect` walks the same resolved call graph.
+- **Confidence is part of every result.** Resolution-dependent measurements carry a `resolution` stamp; an edge that fails to resolve degrades *that single edge* to name-based, visibly. Destructive operations (`unused --apply`) are gated on a fully RESOLVED sweep.
+
 ### Designed for the AI loop
 
 - **Auto-explain by default** — rationale, refactor hints, and primary-source citation ride alongside every fired metric, so an agent reads the *why* without a second tool call.
@@ -165,7 +173,7 @@ Multi-module projects declare the module graph under `modules: { declared: [...]
 ## Limitations
 
 - **Resolution is on by default within the project; external edges need the classpath.** A reference into a dependency not on the classpath degrades *that single edge* to name-based, flagged via the `resolution` field. In-project and cross-language (Kotlin↔Java) edges resolve without a build.
-- **ktrics builds on the Kotlin Analysis API Standalone**, which is version-locked to its Kotlin release and not yet a fully supported standalone use case upstream. The version is pinned and upgrades are gated by a cross-language resolution test corpus in CI.
+- **ktrics builds on the Kotlin Analysis API Standalone**, which is version-locked to its Kotlin release and not yet a fully supported standalone use case upstream. The version is pinned and upgrades are gated by a cross-language resolution test corpus in CI. This cost is deliberate — it is what makes the analysis [resolution-backed](#resolution-backed-by-design).
 - **Multi-module is first-class; module discovery is staged.** v1 requires the graph to be *declared* (`ktrics.yaml` / `--module`); v2 auto-derives it via Gradle/Maven. Kotlin Multiplatform source sets and `expect`/`actual` are a v1 limitation — model the JVM source sets.
 - **Daemon mode assumes process + filesystem persist across the loop.** Fully ephemeral container-per-call CI loses warmth; use CRaC (Linux) or accept one cold platform start.
 - **The native-image client links none of the platform** — any path needing analysis goes through the daemon, never the client.
