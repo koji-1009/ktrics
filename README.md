@@ -31,13 +31,13 @@ Embedding the analysis host carries a real maintenance cost (see [Limitations](#
 ## How it works
 
 ```
-┌─────────────────────────┐         ┌──────────────────────────────────────┐
-│  ktrics (client)        │  socket │  ktricsd (daemon, warm JVM)           │
+┌─────────────────────────┐         ┌────────────────────────────────────────┐
+│  ktrics (client)        │  socket │  ktricsd (daemon, warm JVM)            │
 │  GraalVM native-image   │ ──────► │  embeds the K2/JetBrains platform:     │
 │  ~ms start, single bin, │ ◄────── │  Kotlin Analysis API + Java PSI, one   │
 │  NO platform linked     │ stdio + │  symbol space; cross-file index +      │
 │  relays argv/cwd        │ exit    │  snapshot; parse→metrics→report inproc │
-└─────────────────────────┘         └──────────────────────────────────────┘
+└─────────────────────────┘         └────────────────────────────────────────┘
 ```
 
 The native client links none of the analysis platform, so it starts in milliseconds; it relays your command to the daemon, which auto-spawns on demand and stays warm across the loop.
