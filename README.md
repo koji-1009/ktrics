@@ -1,10 +1,24 @@
 # ktrics
 
-Code-quality metrics for **Java and Kotlin** — the AI-loop counterpart of `dart analyze` / `cargo clippy`. A direct sibling of [`koji-1009/dartrics`](https://github.com/koji-1009/dartrics) (Dart) and [`koji-1009/cargo-rustics`](https://github.com/koji-1009/cargo-rustics) (Rust).
+[![CI](https://github.com/koji-1009/ktrics/actions/workflows/ci.yml/badge.svg)](https://github.com/koji-1009/ktrics/actions/workflows/ci.yml)
+[![GitHub license](https://img.shields.io/github/license/koji-1009/ktrics)](https://github.com/koji-1009/ktrics/blob/main/LICENSE)
 
-> **AI agents — start here:** run `ktrics ai-loop` before driving the tool. It is the operational playbook — the shell commands you actually run, how to pipe `--reporter ai` into Claude / Cursor / Codex / Aider / OpenHands, the four-station refactor walkthrough, and the dismiss-comment syntax. `ktrics manual` is the conceptual companion: lens design, the decision tree, flag catalogue, loop-mode caveats. Both ship embedded in the binary.
+Code-quality metrics and unused public-API detection for **Java and Kotlin** — one analysis pass over both languages, designed for the AI agent loop.
+
+> **AI agents — start here:** run `ktrics ai-loop` (or read [`doc/ai-loop.md`](doc/ai-loop.md)) before driving the tool. It is the operational playbook — the shell commands you actually run, how to pipe `--reporter ai` into Claude / Cursor / Codex / Aider / OpenHands, the four-station refactor walkthrough, and the dismiss-comment syntax. `ktrics manual` is the conceptual companion: lens design, the decision tree, flag catalogue, loop-mode caveats. Both ship embedded in the binary.
+
+## What it does
+
+ktrics computes a battery of code-quality metrics — McCabe, Cognitive Complexity (Sonar), Chidamber & Kemerer, Martin, Halstead — across Java and Kotlin sources in a single run, alongside a call-graph reachability pass for unreachable public API. One embedded analysis host (the Kotlin Analysis API plus the platform's Java PSI) reads **both languages into one symbol space**, so `Kotlin → Java` and `Java → Kotlin` references resolve in either direction without a build.
 
 ktrics **measures, it does not gate.** Each metric is an independent *lens* anchored to a primary source; accept / refactor / dismiss stays in your loop. No metric blocks another. By default the **function-level** lenses fire as warnings; the class- and package-level lenses are **measure-only** (set a threshold in `ktrics.yaml` to gate them) — this keeps the failing set tight and actionable.
+
+### Designed for the AI loop
+
+- **Auto-explain by default** — rationale, refactor hints, and primary-source citation ride alongside every fired metric, so an agent reads the *why* without a second tool call.
+- **Stable IDs across runs** — every violation carries a 16-hex-char id (`sha256("<file>|<scope>|<metric>")`), reappearing across runs so AI loops can detect "my fix didn't take".
+- **Docs in the binary** — `ktrics ai-loop` prints the operational playbook and `ktrics manual` prints the lens reference; no separate doc download.
+- **Sub-second iterations** — a warm daemon keeps the module-aware index in memory, so every loop iteration after the first is fast.
 
 ## How it works
 
@@ -18,32 +32,146 @@ ktrics **measures, it does not gate.** Each metric is an independent *lens* anch
 └─────────────────────────┘         └──────────────────────────────────────┘
 ```
 
-One embedded platform reads **both languages into one symbol space**, so `Kotlin → Java` and `Java → Kotlin` references resolve in either direction. The native client links none of the platform (millisecond start); the warm daemon keeps the module-aware index in memory so every loop iteration is sub-second.
+The native client links none of the analysis platform, so it starts in milliseconds; it relays your command to the daemon, which auto-spawns on demand and stays warm across the loop.
+
+## Install
+
+Download the archive for your platform from [GitHub Releases](https://github.com/koji-1009/ktrics/releases) — `linux-x64` / `macos-arm64` (`.tar.gz`) or `windows-x64` (`.zip`) — extract it, and put its `bin/` on your `PATH`. Each archive bundles the native `ktrics` client and the `ktricsd` daemon; the client locates the daemon as a sibling, so keep the extracted layout intact.
+
+Or build from source (JDK 21 + GraalVM for the native client — see [Development](#development)).
 
 ## Quick start
 
 ```bash
-ktrics analyze . --reporter ai          # the primary integration surface for agents
-ktrics rules                            # the full metric catalogue
-ktrics inspect Parser.parse --direction up --depth 2   # walk the call graph around a symbol
+# Token-efficient report optimised for LLM consumption — the primary integration surface for agents.
+ktrics analyze . --reporter ai | claude -p "Refactor the threshold violations; keep behaviour identical."
+
+# After the agent applies a fix: confirm metrics actually improved.
 ktrics regression --before HEAD~1 --after HEAD --reporter ai
-ktrics unused                           # public-API reachability
-ktrics doctor                           # validate ktrics.yaml
+
+# Read the operational playbook (start here) or the lens reference in the terminal.
+ktrics ai-loop
+ktrics manual
 ```
+
+## Subcommands
+
+| Command | Purpose |
+| --- | --- |
+| `analyze <path>` | Every enabled metric + the public-API unused detector. Emits `signals:` (call-graph fan-in / fan-out per declaration) as reference information alongside the thresholded metrics. |
+| `unused [--apply]` | Public-API reachability only (fast path); `--apply` deletes top-level orphans (safety-gated). |
+| `inspect <symbol>` | Walk the resolved call graph around a named declaration; `--depth` / `--direction up\|down\|both` configure the walk. |
+| `regression --before <ref> --after <ref>` | Compare metrics between two git states; classify each delta by polarity as improved / regressed / unchanged / added / removed. |
+| `report <input.json>` | Re-emit a previously saved JSON report in another format. |
+| `rules` | Catalogue every metric with rationale, refactor hints, and references. |
+| `ai-loop` | Operational playbook: commands, prompts, dismiss syntax — start here for agents (mirrors [`doc/ai-loop.md`](doc/ai-loop.md)). |
+| `manual` | Conceptual reference: lens design, decision tree, full flag catalogue (mirrors [`doc/manual.md`](doc/manual.md)). |
+| `doctor` | Validate `ktrics.yaml`. |
+| `daemon status\|stop` | Daemon lifecycle (auto-spawns on demand). |
 
 Exit codes (sysexits): `0` clean · `1` violations with `--fatal-warnings` · `64` usage · `65` bad input / unresolved git ref · `70` internal · `78` bad config.
 
-## Metric catalogue
+## Provided metrics
 
-**Function level** (both languages) — these **gate** by default: cyclomatic-complexity (10), cognitive-complexity (15), maximum-nesting-level (4), number-of-parameters (4 / Kotlin 6), boolean-trap (2), source-lines-of-code (60). Off / measure-only by default: halstead-volume, maintainability-index, npath-complexity (its product-form estimate over-counts independent guard clauses, so cyclomatic + cognitive carry the branch-complexity gate; set a threshold to enforce it). Kotlin-only: not-null-assertion-density (`!!`, 3), scope-function-nesting (2).
+ktrics ships a curated set anchored to published sources. Each metric exposes `rationale`, `refactorHints`, `references`, and `polarity`, all surfaced through `ktrics rules` and the AI / md / SARIF reporters. Which lenses fire for a file is governed per-metric by `appliesTo` (structural validity, not a tuning knob) — so the firing set is larger for Java and differs in composition for Kotlin, by construction; when a metric doesn't apply, `rules` / `ai` auto-explain says *why*. For the audit trail — selection principles, deviations from the cited definitions, threshold calibration — see [`doc/calibration.md`](doc/calibration.md).
 
-**Class level** — the CK suite (full strength on Java), all **measure-only** by default: number-of-methods, weighted-methods-per-class, lcom4, coupling-between-objects, response-for-class, depth-of-inheritance-tree, number-of-children, class-length. **File level** (Kotlin): top-level-declarations-per-file (10), types-per-file (informational).
+Lenses marked **off** ship disabled by default; opt in via `metrics: { <id>: { enabled: true } }`. A `—` in **Default warning** means the lens emits a measurement but fires no warning until you set a threshold via `metrics: { <id>: { warning: <n> } }`.
 
-**Package level** (Martin), all measure-only / informational: efferent-coupling, afferent-coupling, instability, abstractness, distance-from-main-sequence.
+### Function / method level
 
-Class- and package-level lenses are measure-only because, as dogfooding confirmed, project-wide structural thresholds are noisy as hard gates; opt into one via `ktrics.yaml` (`metrics: { lcom4: { warning: 3 } }`). The set that **fires** is larger for Java and differs in composition for Kotlin — by construction, governed per-metric by `appliesTo` (structural validity), not as a tuning knob. When a metric doesn't apply, `rules`/`ai` auto-explain says *why*. Calibration rationale and deviations live in [`doc/calibration.md`](doc/calibration.md).
+| Metric | Reference | Default warning |
+| --- | --- | --- |
+| Cyclomatic Complexity | McCabe 1976 | 10 (error 20) |
+| Cognitive Complexity | SonarSource 2018 | 15 |
+| Maximum Nesting Level | — | 4 |
+| Number Of Parameters | Fowler 1999 | 4 (Kotlin 6, error 8) |
+| Boolean Trap | McConnell 2004; Bloch 2018 | 2 |
+| Source Lines Of Code | Boehm 1981 | 60 |
+| Not-Null Assertion Density (Kotlin) | Moskała, Effective Kotlin | 3 |
+| Scope Function Nesting (Kotlin) | Moskała, Effective Kotlin | 2 |
+| NPath Complexity | Nejmeh 1988 | — |
+| Method Length | — | — |
+| Halstead Volume **off** | Halstead 1977 | opt-in |
+| Maintainability Index **off** | Oman & Hagemeister 1992 | opt-in |
 
-## Build
+NPath ships measure-only because its product-form estimate over-counts independent guard clauses; cyclomatic + cognitive carry the branch-complexity gate (see [`doc/calibration.md`](doc/calibration.md)).
+
+### Class level
+
+The CK suite (full strength on Java), all measure-only by default — dogfooding confirmed project-wide structural thresholds are noisy as hard gates; opt into one via `ktrics.yaml` (`metrics: { lcom4: { warning: 3 } }`).
+
+| Metric | Reference | Default warning |
+| --- | --- | --- |
+| Number Of Methods | — | — |
+| Weighted Methods Per Class | CK 1994 | — |
+| LCOM4 | Hitz & Montazeri 1995 | — |
+| Coupling Between Objects | CK 1994 | — |
+| Response For a Class | CK 1994 | — |
+| Depth Of Inheritance Tree | CK 1994 | — |
+| Number Of Children | CK 1994 | — |
+| Class Length | — | — |
+
+### File level (Kotlin)
+
+| Metric | Default warning |
+| --- | --- |
+| Top-Level Declarations Per File | 10 |
+| Types Per File | — |
+
+### Package level (Martin 1994)
+
+All measure-only / informational; values rank change-impact rather than fire as verdicts.
+
+| Metric | Default warning |
+| --- | --- |
+| Efferent Coupling (Ce) | — |
+| Afferent Coupling (Ca) | — |
+| Instability (I) | — |
+| Abstractness (A) | — |
+| Distance From Main Sequence (D) | — |
+
+## Configuration
+
+Minimal `ktrics.yaml` at the project root:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/koji-1009/ktrics/main/schemas/ktrics-config.schema.json
+
+ktrics:
+  metrics:
+    cyclomatic-complexity:
+      warning: 10
+      error: 20
+    cognitive-complexity:
+      warning: 15
+  exclude:
+    - "**/build/**"
+```
+
+Multi-module projects declare the module graph under `modules: { declared: [...] }` (or per-invocation via `--module`); v2 will auto-derive it from the Gradle/Maven build. The `# yaml-language-server` directive turns on autocomplete + typo detection in editors with [yaml-language-server](https://github.com/redhat-developer/yaml-language-server) integration. Every key is documented in [`schemas/ktrics-config.schema.json`](schemas/ktrics-config.schema.json) and explained in `ktrics manual`. This repository's own [`ktrics.yaml`](ktrics.yaml) — ktrics dogfoods itself — is a full multi-module example.
+
+## Output formats
+
+`--reporter` accepts `console` (default), `json`, `md` (PR comments / issue bodies), `ai` (token-efficient bundle starting with `# ktrics ai-report v1`), and `sarif` (SARIF 2.1.0 for GitHub Code Scanning / GitLab).
+
+## Documentation
+
+- [`ktrics ai-loop`](doc/ai-loop.md) — operational playbook: shell commands, prompt examples, dismiss syntax, four-station walkthrough of one full refactor iteration. Start here when you want to run ktrics.
+- [`ktrics manual`](doc/manual.md) — conceptual reference: lens design, every flag, dismissal mechanics, refactor / dismiss decision tree, resolution model, exit codes. Come back here when you need to know *why* a lens fires.
+- [`doc/calibration.md`](doc/calibration.md) — citation audit, selection principles, counting-rule deviations.
+- [`schemas/`](schemas/) — JSON Schema files: `ktrics-config.schema.json` for `ktrics.yaml`, `ktrics-dismissals.schema.json` for the dismissals sidecar.
+
+## Limitations
+
+- **Resolution is on by default within the project; external edges need the classpath.** A reference into a dependency not on the classpath degrades *that single edge* to name-based, flagged via the `resolution` field. In-project and cross-language (Kotlin↔Java) edges resolve without a build.
+- **ktrics builds on the Kotlin Analysis API Standalone**, which is version-locked to its Kotlin release and not yet a fully supported standalone use case upstream. The version is pinned and upgrades are gated by a cross-language resolution test corpus in CI.
+- **Multi-module is first-class; module discovery is staged.** v1 requires the graph to be *declared* (`ktrics.yaml` / `--module`); v2 auto-derives it via Gradle/Maven. Kotlin Multiplatform source sets and `expect`/`actual` are a v1 limitation — model the JVM source sets.
+- **Daemon mode assumes process + filesystem persist across the loop.** Fully ephemeral container-per-call CI loses warmth; use CRaC (Linux) or accept one cold platform start.
+- **The native-image client links none of the platform** — any path needing analysis goes through the daemon, never the client.
+- Report field names are stable through `0.x`, not yet externally stress-tested — pin a version in CI.
+- The built-in metric set is curated, not exhaustive; Halstead / MI are off by default. See [`doc/calibration.md`](doc/calibration.md) for the selection principles.
+
+## Development
 
 ```bash
 ./gradlew build                    # all modules
@@ -52,25 +180,12 @@ Class- and package-level lenses are measure-only because, as dogfooding confirme
 ./gradlew test                     # golden + unit tests
 ```
 
-Requires JDK 21. The Kotlin Analysis API Standalone + IntelliJ platform resolve from the JetBrains repositories (pinned in `gradle/libs.versions.toml`).
+Requires JDK 21 (GraalVM for `nativeCompile`). The Kotlin Analysis API Standalone + IntelliJ platform resolve from the JetBrains repositories (pinned in `gradle/libs.versions.toml`).
 
-## Honest limitations (v0)
+## Related projects
 
-- **Resolution is on by default within the project; external edges need the classpath.** A reference into a dependency not on the classpath degrades *that single edge* to name-based, flagged via the `resolution` field. In-project and cross-language (Kotlin↔Java) edges resolve without a build.
-- **Java analysis depends on the standalone session materializing Java PSI bodies + Java symbols** — the foundational validation check (`Phase0SpikeTest`). This is the least-trodden part of the Analysis API Standalone; the version is pinned and upgrades are gated by the CI resolution corpus.
-- **Kotlin Analysis API Standalone is version-locked to the Kotlin release** and not yet a fully supported standalone use case; pinned, upgrades gated.
-- **Multi-module is first-class; module discovery is staged.** The graph drives the session, cross-module resolution, package boundaries and unused-reachability from v1. v1 requires the graph to be *declared* (`ktrics.yaml` / `--module`); v2 auto-derives it via Gradle/Maven. Kotlin Multiplatform source sets and `expect`/`actual` are a v1 limitation — model the JVM source sets, state the gap.
-- **Daemon mode assumes process + filesystem persist across the loop.** Fully ephemeral container-per-call CI loses warmth; use CRaC (Linux) or accept one cold platform start.
-- **The native-image client links none of the platform** — any path needing analysis goes through the daemon, never the client.
-- Field names are stable through `0.x`, not yet externally stress-tested — pin a version in CI.
-- The built-in metric set is curated, not exhaustive; Halstead / MI are off by default.
+The same metrics-as-lenses design for other ecosystems: [`dartrics`](https://github.com/koji-1009/dartrics) (Dart) and [`cargo-rustics`](https://github.com/koji-1009/cargo-rustics) (Rust).
 
-## Repository status note
+## License
 
-**Verified green**: `./gradlew test` compiles every module (16 shipping + 2 test-only) against the real pinned Analysis API (2.1.20) and passes every unit test. (Building needs network access to Maven Central + the JetBrains repos.)
-
-The foundational spike (`frontend/.../Phase0SpikeTest.kt`) proves **all** the make-or-break facts — Kotlin PSI loads, **Java PSI bodies materialize**, **Kotlin→Java** resolves (Java *source* included), **Java→Kotlin** resolves, and **Kotlin→Kotlin cross-module** resolves. The single-host, one-symbol-space design holds in full; cross-language Kotlin↔Java resolution is real in both directions.
-
-The Kotlin→Java edge posed an initial risk. It briefly *appeared* unresolvable, but root-causing it found a self-inflicted bug, not a platform limitation: the session never registered the **JDK as a `KaSdkModule`**, and the FIR Java symbol provider is rooted on the JDK — so without it Kotlin could resolve *no* Java at all (not the JDK, not source, not even a compiled JAR). Adding the JDK SDK module (`buildKtSdkModule { addBinaryRootsFromJdkHome(...) }`, see `StandaloneSessionFactory.build`) makes every Kotlin→Java edge resolve, source included.
-
-Dependency note: the foundation is the monolithic `org.jetbrains.kotlin:kotlin-compiler` (unrelocated com.intellij PSI + `KotlinCoreEnvironment` + co-located extension XMLs in one jar), with the `analysis-api-*-for-ide` jars (`isTransitive=false`) layered on for the K2 API.
+MIT.
