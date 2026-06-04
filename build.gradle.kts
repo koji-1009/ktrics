@@ -13,7 +13,10 @@ plugins {
 
 allprojects {
     group = "io.github.koji-1009.ktrics"
-    version = providers.gradleProperty("ktrics.version").getOrElse("0.1.0-SNAPSHOT")
+    // gradle.properties `ktrics.version` is the SINGLE source of the release version. The fallback is
+    // deliberately version-shaped-but-unreleasable so a build that somehow misses the property can
+    // never masquerade as a release.
+    version = providers.gradleProperty("ktrics.version").getOrElse("0.0.0-dev")
 }
 
 // Every module is Kotlin/JVM 21 with the same lint + test conventions.
@@ -57,6 +60,16 @@ subprojects {
         testLogging {
             events("passed", "skipped", "failed")
             showStandardStreams = false
+        }
+    }
+
+    // Stamp every module jar so the runtime identities (engine `Build`, daemon `BuildInfo`) read the
+    // real version from their OWN jar's manifest; only classes-dir runs (IDE, gradle test) see the
+    // dev fallback. The daemon's jar adds its protocol attribute on top in its own build script.
+    tasks.withType<Jar>().configureEach {
+        manifest {
+            attributes["Implementation-Title"] = "ktrics-${project.name}"
+            attributes["Implementation-Version"] = project.version
         }
     }
 

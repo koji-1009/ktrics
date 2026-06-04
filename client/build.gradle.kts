@@ -20,6 +20,12 @@ application {
     mainClass.set("dev.ktrics.client.MainKt")
 }
 
+// KtricsVersion is a compile-time const (native-image bakes it in; no manifest exists at run time),
+// so VersionSyncTest pins it against the build's resolved `ktrics.version` — drift fails CI.
+tasks.withType<Test>().configureEach {
+    systemProperty("ktrics.build.version", version.toString())
+}
+
 graalvmNative {
     binaries {
         named("main") {

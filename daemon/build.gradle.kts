@@ -31,10 +31,11 @@ application {
         )
 }
 
+// Implementation-Version is stamped by the root convention for every module jar; this block only
+// adds the daemon-specific attributes on top.
 tasks.named<Jar>("jar") {
     manifest {
         attributes["Implementation-Title"] = "ktricsd"
-        attributes["Implementation-Version"] = project.version
         // The client/daemon version handshake uses this: mismatch triggers daemon restart.
         attributes["Ktrics-Protocol-Version"] = "1"
     }

@@ -27,6 +27,19 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
+      # The tag is the public version; gradle.properties is what the binaries self-report. Refuse to
+      # ship a release whose archive name and `ktrics --version` would disagree.
+      - name: Verify the release tag matches ktrics.version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.release.tag_name }}"
+          prop="$(sed -n 's/^ktrics\.version=//p' gradle.properties | tr -d '[:space:]')"
+          if [ "${tag#v}" != "$prop" ]; then
+            echo "::error::release tag '$tag' does not match gradle.properties ktrics.version '$prop'"
+            exit 1
+          fi
+
       # GraalVM JDK 21: the native-image toolchain + the JDK the rest of the build needs.
       - uses: graalvm/setup-graalvm@bef4b0e916c7dd079bf60fb95d49139f67e32c5f # v1.5.3
         with:
