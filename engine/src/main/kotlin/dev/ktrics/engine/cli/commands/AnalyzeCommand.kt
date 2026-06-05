@@ -187,7 +187,7 @@ object AnalyzeCommand : CommandHandler {
             // stayed in the graph, so their references keep other code alive.
             val exclude = ExcludeFilter(resolved.config.exclude)
             val unused =
-                UnusedDetector(warm.units, classifierFor, ProjectInputs.unusedConfig(resolved)).detect().unused
+                UnusedDetector(warm.units, classifierFor, ProjectInputs.unusedConfig(resolved, warm.units)).detect().unused
                     .filterNot { exclude.excludes(it.file) }
                     .map { UnusedEntry(it.file, it.span.startLine, it.kind, it.displayName) }
             val graph = CallGraph.build(warm.units, classifierFor)

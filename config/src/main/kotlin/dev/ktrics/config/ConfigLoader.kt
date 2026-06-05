@@ -70,7 +70,7 @@ object ConfigLoader {
                 } ?: ResolutionMode.AUTO,
             modules = parseModules(k.child("modules") as? YamlMap, problems),
             metrics = parseMetrics(k.child("metrics") as? YamlMap, problems),
-            unused = parseUnused(k.child("unused") as? YamlMap),
+            unused = parseUnused(k.child("unused") as? YamlMap, problems),
             exclude = (k.child("exclude") as? YamlList).strings(),
             snapshot = SnapshotConfig(mode = (k.child("snapshot") as? YamlMap)?.string("mode") ?: "baseline"),
         )
@@ -142,12 +142,16 @@ object ConfigLoader {
         }.toMap()
     }
 
-    private fun parseUnused(node: YamlMap?): UnusedConfig {
+    private fun parseUnused(
+        node: YamlMap?,
+        problems: MutableList<String>,
+    ): UnusedConfig {
         if (node == null) return UnusedConfig()
         return UnusedConfig(
             entryPoints = (node.child("entry-points") as? YamlList).strings().ifEmpty { listOf("main", "@Test") },
             ignoreAnnotations = (node.child("ignore-annotations") as? YamlList).strings(),
             presets = (node.child("presets") as? YamlList).strings(),
+            autoPresets = node.strictBool("auto-presets", "unused.auto-presets", problems) ?: true,
         )
     }
 

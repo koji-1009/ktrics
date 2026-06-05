@@ -185,11 +185,21 @@ class ConfigLoaderParseTest {
                     entry-points: [main, "@Custom"]
                     ignore-annotations: [Generated]
                     presets: [spring, jpa]
+                    auto-presets: false
                 """.trimIndent(),
             )
         cfg.unused.entryPoints shouldContainExactly listOf("main", "@Custom")
         cfg.unused.ignoreAnnotations shouldContainExactly listOf("Generated")
         cfg.unused.presets shouldContainExactly listOf("spring", "jpa")
+        cfg.unused.autoPresets shouldBe false
+    }
+
+    @Test
+    fun `auto-presets defaults on and a garbage value is a problem`() {
+        ConfigLoader.parse("ktrics:\n  unused:\n    presets: [spring]\n").unused.autoPresets shouldBe true
+        val problems = ArrayList<String>()
+        ConfigLoader.parse("ktrics:\n  unused:\n    auto-presets: maybe\n", problems)
+        problems shouldContainExactly listOf("'unused.auto-presets' must be a boolean (got 'maybe')")
     }
 
     @Test

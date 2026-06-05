@@ -6,6 +6,7 @@ import dev.ktrics.ir.Resolution
 import dev.ktrics.ir.SourceUnit
 import dev.ktrics.ir.Span
 import dev.ktrics.ir.TypeDecl
+import dev.ktrics.ir.TypeRef
 import dev.ktrics.ir.Visibility
 import dev.ktrics.langapi.NodeClassifier
 
@@ -100,8 +101,8 @@ class UnusedDetector(
          * reported surface stays what it has always been — top-level properties only.
          */
         val reportable: Boolean = true,
-        /** Declared supertype simple names (types only) — drives the supertype keep-alive. */
-        val supertypes: List<String> = emptyList(),
+        /** Declared supertype refs (types only) — drives the supertype keep-alive. */
+        val supertypes: List<TypeRef> = emptyList(),
     )
 
     fun detect(): UnusedReport {
@@ -200,7 +201,7 @@ class UnusedDetector(
                 outgoing = typeEdges.outgoing,
                 edgeResolution = typeEdges.resolution,
                 topLevel = topLevel,
-                supertypes = type.supertypes.map { simpleSupertypeName(it.name) },
+                supertypes = type.supertypes,
             ).reaching(containerKey),
         )
         type.methods.forEach { m ->
@@ -350,25 +351,46 @@ class UnusedDetector(
      * The keys of every kept-alive TYPE: annotation-kept types, types whose declared supertype name
      * matches a configured keep-alive suffix, and — transitively — types extending a kept project
      * type (`class Main : Base` where `Base : AppCompatActivity` must keep Main even though Main's
-     * own supertype name carries no framework suffix). The closure matches supertypes by SIMPLE name,
-     * over-approximating on homonyms — the safe direction for a deletion tool.
+     * own supertype name carries no framework suffix). A RESOLVED supertype edge into the project is
+     * governed by the closure only (an in-project `UserService : CrudService` is not suffix-kept);
+     * the closure matches resolved edges by exact key and degrades to SIMPLE-name matching for
+     * unresolved ones — over-approximating on homonyms, the safe direction for a deletion tool.
      */
     private fun keptAliveTypeKeys(decls: List<Decl>): Set<String> {
         val types = decls.filter { it.kind !in MEMBER_KINDS }
-        val kept = types.filterTo(HashSet()) { isAnnotationKept(it) || hasKeepAliveSupertype(it) }
+        val projectTypeKeys = types.mapTo(HashSet()) { it.key }
+        val kept = types.filterTo(HashSet()) { isAnnotationKept(it) || hasFrameworkSupertype(it, projectTypeKeys) }
         if (kept.isEmpty()) return emptySet()
         var grew = true
         while (grew) {
+            val keptKeys = kept.mapTo(HashSet()) { it.key }
             val keptSimpleNames = kept.mapTo(HashSet()) { it.key.substringAfterLast('.') }
-            grew = types.filter { it !in kept && it.supertypes.any { st -> st in keptSimpleNames } }.let(kept::addAll)
+            grew =
+                types.filter { t ->
+                    t !in kept &&
+                        t.supertypes.any { st ->
+                            st.qualifiedName?.let { it in keptKeys } ?: (simpleSupertypeName(st.name) in keptSimpleNames)
+                        }
+                }.let(kept::addAll)
         }
         return kept.mapTo(HashSet()) { it.key }
     }
 
-    /** Case-sensitive suffix match, so CamelCase bounds it: `Activity` covers BaseActivity, not `View` → `Preview`. */
-    private fun hasKeepAliveSupertype(d: Decl): Boolean =
+    /**
+     * A supertype LEAVING the project whose simple name carries a configured keep-alive suffix.
+     * Case-sensitive, so CamelCase bounds it (`Activity` covers BaseActivity; `View` ≠ `Preview`).
+     * A supertype RESOLVED to a project type is excluded — in-project inheritance is the transitive
+     * closure's job; an unresolved edge keeps the suffix match as the safe, name-based fallback.
+     */
+    private fun hasFrameworkSupertype(
+        d: Decl,
+        projectTypeKeys: Set<String>,
+    ): Boolean =
         config.keepAliveSupertypes.isNotEmpty() &&
-            d.supertypes.any { st -> config.keepAliveSupertypes.any { suffix -> st.endsWith(suffix) } }
+            d.supertypes.any { st ->
+                st.qualifiedName !in projectTypeKeys &&
+                    config.keepAliveSupertypes.any { suffix -> simpleSupertypeName(st.name).endsWith(suffix) }
+            }
 
     /** True when [d]'s key sits under a kept-alive type's key (`pkg.Type` covers `pkg.Type.member`). */
     private fun isMemberOfKeptType(

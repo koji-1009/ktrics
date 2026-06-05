@@ -113,6 +113,62 @@ class UnusedReachabilityTest {
     }
 
     @Test
+    fun `a suffix does not keep inheritance RESOLVED to a project type - the closure governs it`() {
+        val c = FakeClassifier()
+        // Both ends in-project, resolved: UserService : pkg.CrudService. `Service` is just naming
+        // convention here, not a framework instantiation — neither may be suppressed by the suffix.
+        val base = c.type("CrudService")
+        val resolvedSuper = dev.ktrics.ir.TypeRef("CrudService", "pkg.CrudService", "pkg", Resolution.RESOLVED)
+        val user = c.type("UserService", supertypeRefs = listOf(resolvedSuper))
+        val config = UnusedConfig(keepAliveSupertypes = setOf("Service"))
+        val report = UnusedDetector(listOf(unit(types = listOf(base, user))), { c }, config).detect()
+        val names = report.unused.map { it.displayName }
+        names shouldContain "UserService"
+        names shouldContain "CrudService"
+    }
+
+    @Test
+    fun `a suffix keeps inheritance resolved to an EXTERNAL class without any package allowlist`() {
+        val c = FakeClassifier()
+        // Third-party Android bases (material, flutter, any SDK) resolve outside the project; the
+        // suffix must keep them without ktrics maintaining a framework-package list.
+        val flutter =
+            c.type(
+                "Embedding",
+                supertypeRefs =
+                    listOf(
+                        dev.ktrics.ir.TypeRef(
+                            "FlutterActivity",
+                            "io.flutter.embedding.android.FlutterActivity",
+                            "io.flutter.embedding.android",
+                            dev.ktrics.ir.Resolution.RESOLVED,
+                        ),
+                    ),
+            )
+        val config = UnusedConfig(keepAliveSupertypes = setOf("Activity"))
+        val report = UnusedDetector(listOf(unit(types = listOf(flutter))), { c }, config).detect()
+        report.unused.map { it.displayName } shouldNotContain "Embedding"
+    }
+
+    @Test
+    fun `the closure matches resolved edges by exact key, not by homonym`() {
+        val c = FakeClassifier()
+        // Kept base in pkg; a type resolving its supertype to a DIFFERENT package's homonym `Base`
+        // must not ride the kept one in resolved mode.
+        val keptBase = c.type("Base", supertypes = listOf("AppCompatActivity"))
+        val rider =
+            c.type(
+                "Rider",
+                supertypeRefs = listOf(dev.ktrics.ir.TypeRef("Base", "other.Base", "other", dev.ktrics.ir.Resolution.RESOLVED)),
+            )
+        val config = UnusedConfig(keepAliveSupertypes = setOf("Activity"))
+        val report = UnusedDetector(listOf(unit(types = listOf(keptBase, rider))), { c }, config).detect()
+        val names = report.unused.map { it.displayName }
+        names shouldNotContain "Base"
+        names shouldContain "Rider" // homonym supertype in another package: not the kept project Base
+    }
+
+    @Test
     fun `Kotlin internal is part of the reportable surface`() {
         val c = FakeClassifier()
         val internalOrphan = c.fn("internalOrphan", visibility = Visibility.INTERNAL)

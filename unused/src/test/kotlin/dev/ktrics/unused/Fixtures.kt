@@ -148,11 +148,13 @@ internal fun FakeClassifier.type(
     lang: Lang = Lang.KOTLIN,
     annotations: List<String> = emptyList(),
     supertypes: List<String> = emptyList(),
+    /** Resolved supertype edges (carrying a qualifiedName), merged after the name-based [supertypes]. */
+    supertypeRefs: List<TypeRef> = emptyList(),
 ): TypeDecl {
     val n = register(emptyList(), emptyList(), Resolution.NAME_BASED)
     return TypeDecl(
         kind, name, "$pkg.$name", false,
-        supertypes.map { TypeRef(it, null, null, Resolution.NAME_BASED) },
+        supertypes.map { TypeRef(it, null, null, Resolution.NAME_BASED) } + supertypeRefs,
         fields, methods, nested,
         Modifiers(
             visibility,

@@ -85,6 +85,11 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Framework keep-alive presets: lombok, jpa, jackson, spring, kotlinx-serialization, room, compose, parcelize, moshi, dagger, android, ktor. Unknown values are silently ignored (forward-compat)."
+        },
+        "auto-presets": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-enable presets from the analyzed sources' imports (androidx.* -> android, org.springframework.* -> spring, io.ktor.* -> ktor, ...). Declared presets are always added on top."
         }
       },
       "additionalProperties": false

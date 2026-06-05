@@ -57,4 +57,25 @@ class PresetsTest {
     fun `presets without a supertype table contribute no supertypes`() {
         Presets.keepAliveSupertypes(listOf("spring", "ktor", "made-up")) shouldBe emptySet()
     }
+
+    @Test
+    fun `detect maps framework imports to their presets and ignores everything else`() {
+        val detected =
+            Presets.detect(
+                listOf(
+                    "androidx.appcompat.app.AppCompatActivity",
+                    "org.springframework.stereotype.Service",
+                    "io.ktor.server.routing.routing",
+                    "kotlinx.serialization.Serializable",
+                    "java.util.UUID",
+                ),
+            )
+        detected shouldContainAll listOf("android", "spring", "ktor", "kotlinx-serialization")
+        detected.contains("lombok") shouldBe false
+    }
+
+    @Test
+    fun `detect finds nothing in framework-free imports`() {
+        Presets.detect(listOf("java.io.File", "kotlin.collections.List", "com.example.app.Helper")) shouldBe emptySet()
+    }
 }

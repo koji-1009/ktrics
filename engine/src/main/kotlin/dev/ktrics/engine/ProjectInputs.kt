@@ -4,6 +4,7 @@ import dev.ktrics.config.Presets
 import dev.ktrics.frontend.java.JavaFrontend
 import dev.ktrics.frontend.kotlin.KotlinFrontend
 import dev.ktrics.ir.Lang
+import dev.ktrics.ir.SourceUnit
 import dev.ktrics.langapi.NodeClassifier
 import dev.ktrics.unused.UnusedConfig
 import java.io.File
@@ -23,20 +24,25 @@ object ProjectInputs {
         return { lang -> if (lang == Lang.KOTLIN) kotlin else java }
     }
 
-    /** The unused-detector config (entry points + keep-alive presets) from the effective config. */
+    /**
+     * The unused-detector config (entry points + keep-alive presets) from the effective config.
+     * Presets are the union of the declared list and the ones auto-detected from [units]' imports
+     * (the code importing `androidx.*` IS an Android app); `unused: { auto-presets: false }` turns
+     * the detection off.
+     */
     fun unusedConfig(
         resolved: ResolvedProject,
+        units: List<SourceUnit>,
         includeTests: Boolean = false,
     ): UnusedConfig {
+        val declared = resolved.config.unused.presets
+        val auto = if (resolved.config.unused.autoPresets) Presets.detect(units.flatMap { it.imports }) else emptySet()
+        val presets = declared.toSet() + auto
         val base =
             UnusedConfig(
                 entryPoints = resolved.config.unused.entryPoints.toSet() + "main",
-                keepAliveAnnotations =
-                    Presets.keepAliveAnnotations(
-                        resolved.config.unused.presets,
-                        resolved.config.unused.ignoreAnnotations,
-                    ),
-                keepAliveSupertypes = Presets.keepAliveSupertypes(resolved.config.unused.presets),
+                keepAliveAnnotations = Presets.keepAliveAnnotations(presets, resolved.config.unused.ignoreAnnotations),
+                keepAliveSupertypes = Presets.keepAliveSupertypes(presets),
             )
         // `--include-tests` widens the report into test trees, which are excluded by default.
         return if (includeTests) base.copy(testGlobs = emptyList()) else base

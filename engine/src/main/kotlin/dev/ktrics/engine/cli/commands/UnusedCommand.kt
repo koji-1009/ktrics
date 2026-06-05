@@ -33,12 +33,12 @@ object UnusedCommand : CommandHandler {
         val resolved = GraphSource.resolve(ctx, target)
         if (!GraphSource.reportConfig(ctx, resolved)) return Exit.BAD_CONFIG
         val classifierFor = ProjectInputs.classifierFor(ctx.projectRoot, resolved.resolved)
-        val unusedConfig = ProjectInputs.unusedConfig(resolved, includeTests = ctx.flag("--include-tests"))
 
         // withWarm (not a bare get): the sweep traverses PSI under the cache monitor, so a concurrent
         // request cannot rebuild the cache and dispose the session mid-traversal.
         val full =
             WarmIndexCache.withWarm(ctx.projectRoot, resolved.graph, resolved.configHash, resolved.resolved) { warm ->
+                val unusedConfig = ProjectInputs.unusedConfig(resolved, warm.units, includeTests = ctx.flag("--include-tests"))
                 UnusedDetector(warm.units, classifierFor, unusedConfig).detect()
             }
         val exclude = ExcludeFilter(resolved.config.exclude)
