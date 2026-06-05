@@ -34,7 +34,27 @@ class PresetsTest {
 
     @Test
     fun `known lists exactly the registered preset names`() {
-        Presets.known() shouldContainAll listOf("lombok", "jpa", "spring", "compose", "dagger")
+        Presets.known() shouldContainAll listOf("lombok", "jpa", "spring", "compose", "dagger", "android", "ktor")
         Presets.known().contains("not-a-preset") shouldBe false
+    }
+
+    @Test
+    fun `the android preset covers Hilt and Keep annotations plus the manifest-wired supertypes`() {
+        val annotations = Presets.keepAliveAnnotations(listOf("android"), emptyList())
+        annotations shouldContainAll listOf("Keep", "AndroidEntryPoint", "HiltAndroidApp", "HiltViewModel", "JavascriptInterface")
+        val supertypes = Presets.keepAliveSupertypes(listOf("android"))
+        supertypes shouldContainAll listOf("Activity", "Fragment", "Service", "BroadcastReceiver", "ContentProvider", "ViewModel")
+    }
+
+    @Test
+    fun `the ktor preset keeps Resource routes and the spring preset covers the reflective surface`() {
+        Presets.keepAliveAnnotations(listOf("ktor"), emptyList()) shouldContainAll listOf("Resource")
+        val spring = Presets.keepAliveAnnotations(listOf("spring"), emptyList())
+        spring shouldContainAll listOf("ConfigurationProperties", "ControllerAdvice", "ExceptionHandler", "PostConstruct")
+    }
+
+    @Test
+    fun `presets without a supertype table contribute no supertypes`() {
+        Presets.keepAliveSupertypes(listOf("spring", "ktor", "made-up")) shouldBe emptySet()
     }
 }

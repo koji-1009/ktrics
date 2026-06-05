@@ -15,6 +15,13 @@ data class UnusedConfig(
     val entryPoints: Set<String> = setOf("main", "@Test", "@ParameterizedTest"),
     /** Annotation simple names that keep a symbol alive (from presets + ignore-annotations). */
     val keepAliveAnnotations: Set<String> = emptySet(),
+    /**
+     * Supertype-name SUFFIXES that keep a type alive (from presets): frameworks like Android
+     * instantiate components by inheritance (manifest-wired Activities/Services), not annotations.
+     * Case-sensitive suffix matching, so CamelCase gives natural boundaries (`Activity` covers
+     * AppCompatActivity and BaseActivity; `View` does not match `Preview`).
+     */
+    val keepAliveSupertypes: Set<String> = emptySet(),
     /** Globs for generated trees skipped by default. */
     val generatedGlobs: List<String> = listOf("build/generated/", "target/generated-sources/"),
     /**
@@ -93,6 +100,8 @@ class UnusedDetector(
          * reported surface stays what it has always been — top-level properties only.
          */
         val reportable: Boolean = true,
+        /** Declared supertype simple names (types only) — drives the supertype keep-alive. */
+        val supertypes: List<String> = emptyList(),
     )
 
     fun detect(): UnusedReport {
@@ -100,13 +109,13 @@ class UnusedDetector(
         val byKey = decls.associateBy { it.key }
         val bySimpleName = decls.groupBy { it.key.substringAfterLast('.') }
 
-        // A keep-alive annotation on a TYPE covers its members too (a @Serializable/@Entity class is
-        // touched reflectively as a whole), so members of kept types are seeded as roots and never
-        // reported — the dartrics annotation-propagation rule.
-        val keptTypeKeys = decls.filterTo(ArrayList()) { it.kind !in MEMBER_KINDS && isKeptAlive(it) }.mapTo(HashSet()) { it.key }
+        // Keep-alive covers a TYPE as a whole (a @Serializable/@Entity class is touched reflectively;
+        // an Activity is manifest-instantiated), so members of kept types are seeded as roots and
+        // never reported — the dartrics annotation-propagation rule.
+        val keptTypeKeys = keptAliveTypeKeys(decls)
 
         // Roots: main, entry/keep-alive annotated declarations, members of kept-alive types.
-        val roots = decls.filter { isRoot(it) || isMemberOfKeptType(it, keptTypeKeys) }
+        val roots = decls.filter { isRoot(it, keptTypeKeys) || isMemberOfKeptType(it, keptTypeKeys) }
         val reachable = bfs(roots, byKey, bySimpleName)
 
         val unused =
@@ -191,6 +200,7 @@ class UnusedDetector(
                 outgoing = typeEdges.outgoing,
                 edgeResolution = typeEdges.resolution,
                 topLevel = topLevel,
+                supertypes = type.supertypes.map { simpleSupertypeName(it.name) },
             ).reaching(containerKey),
         )
         type.methods.forEach { m ->
@@ -315,23 +325,50 @@ class UnusedDetector(
             isReportableSurface(d) &&
             !isGenerated(d.file) &&
             !isTest(d.file) &&
-            !isKeptAlive(d) &&
+            !isAnnotationKept(d) &&
+            d.key !in keptTypeKeys &&
             !isMemberOfKeptType(d, keptTypeKeys) &&
             d.key !in reachable &&
             !d.isMain
 
-    private fun isRoot(d: Decl): Boolean {
+    private fun isRoot(
+        d: Decl,
+        keptTypeKeys: Set<String>,
+    ): Boolean {
         if (d.isMain && "main" in config.entryPoints) return true
         // An override of an out-of-project supertype member (Runnable.run, equals/hashCode, a framework
         // callback) is invoked via the runtime/framework, not an in-project caller, so it would be
         // wrongly reported unused. Seed every override as a root — this strictly REDUCES false positives.
         if (d.isOverride) return true
-        return d.annotations.any { ann ->
-            "@$ann" in config.entryPoints || ann in config.keepAliveAnnotations
-        }
+        if (isAnnotationKept(d) || d.key in keptTypeKeys) return true
+        return d.annotations.any { "@$it" in config.entryPoints }
     }
 
-    private fun isKeptAlive(d: Decl): Boolean = d.annotations.any { it in config.keepAliveAnnotations }
+    private fun isAnnotationKept(d: Decl): Boolean = d.annotations.any { it in config.keepAliveAnnotations }
+
+    /**
+     * The keys of every kept-alive TYPE: annotation-kept types, types whose declared supertype name
+     * matches a configured keep-alive suffix, and — transitively — types extending a kept project
+     * type (`class Main : Base` where `Base : AppCompatActivity` must keep Main even though Main's
+     * own supertype name carries no framework suffix). The closure matches supertypes by SIMPLE name,
+     * over-approximating on homonyms — the safe direction for a deletion tool.
+     */
+    private fun keptAliveTypeKeys(decls: List<Decl>): Set<String> {
+        val types = decls.filter { it.kind !in MEMBER_KINDS }
+        val kept = types.filterTo(HashSet()) { isAnnotationKept(it) || hasKeepAliveSupertype(it) }
+        if (kept.isEmpty()) return emptySet()
+        var grew = true
+        while (grew) {
+            val keptSimpleNames = kept.mapTo(HashSet()) { it.key.substringAfterLast('.') }
+            grew = types.filter { it !in kept && it.supertypes.any { st -> st in keptSimpleNames } }.let(kept::addAll)
+        }
+        return kept.mapTo(HashSet()) { it.key }
+    }
+
+    /** Case-sensitive suffix match, so CamelCase bounds it: `Activity` covers BaseActivity, not `View` → `Preview`. */
+    private fun hasKeepAliveSupertype(d: Decl): Boolean =
+        config.keepAliveSupertypes.isNotEmpty() &&
+            d.supertypes.any { st -> config.keepAliveSupertypes.any { suffix -> st.endsWith(suffix) } }
 
     /** True when [d]'s key sits under a kept-alive type's key (`pkg.Type` covers `pkg.Type.member`). */
     private fun isMemberOfKeptType(
@@ -374,5 +411,8 @@ class UnusedDetector(
     private companion object {
         /** Declaration kinds that are members, not types — the complement defines "type" for keep-alive propagation. */
         val MEMBER_KINDS = setOf("function", "method", "property")
+
+        /** A supertype entry's SIMPLE name: drops a generic argument list and any package qualifier. */
+        fun simpleSupertypeName(name: String): String = name.substringBefore('<').substringAfterLast('.').trim()
     }
 }

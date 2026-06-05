@@ -147,10 +147,13 @@ internal fun FakeClassifier.type(
     visibility: Visibility = Visibility.PUBLIC,
     lang: Lang = Lang.KOTLIN,
     annotations: List<String> = emptyList(),
+    supertypes: List<String> = emptyList(),
 ): TypeDecl {
     val n = register(emptyList(), emptyList(), Resolution.NAME_BASED)
     return TypeDecl(
-        kind, name, "$pkg.$name", false, emptyList(), fields, methods, nested,
+        kind, name, "$pkg.$name", false,
+        supertypes.map { TypeRef(it, null, null, Resolution.NAME_BASED) },
+        fields, methods, nested,
         Modifiers(
             visibility,
         ),

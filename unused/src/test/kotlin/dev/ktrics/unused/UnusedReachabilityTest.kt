@@ -55,6 +55,63 @@ class UnusedReachabilityTest {
         names shouldContain "PayloadExtra"
     }
 
+    // --- supertype keep-alive (frameworks that instantiate by inheritance, e.g. Android) ---
+
+    @Test
+    fun `a configured supertype suffix keeps a framework-instantiated type, its members, and its callees`() {
+        val c = FakeClassifier()
+        // MainActivity is manifest-wired: nothing in source references it, but it must stay alive —
+        // along with its members and the helper its body calls (it is a ROOT, not just unreported).
+        val helper = c.fn("renderHelp")
+        val onCreate = c.fn("setup", calls = listOf("renderHelp"))
+        val activity = c.type("MainActivity", methods = listOf(onCreate), supertypes = listOf("AppCompatActivity"))
+        val orphan = c.type("Orphan")
+        val config = UnusedConfig(keepAliveSupertypes = setOf("Activity"))
+        val report = UnusedDetector(listOf(unit(fns = listOf(helper), types = listOf(activity, orphan))), { c }, config).detect()
+        val names = report.unused.map { it.displayName }
+        names shouldNotContain "MainActivity"
+        names shouldNotContain "MainActivity.setup()"
+        names shouldNotContain "renderHelp()" // reached FROM the kept root
+        names shouldContain "Orphan" // the control: no matching supertype, still reported
+    }
+
+    @Test
+    fun `supertype keep-alive is transitive through project base classes`() {
+        val c = FakeClassifier()
+        // Main : Base, Base : AppCompatActivity — Main carries no framework suffix of its own, but
+        // extends a kept project type, so the closure must keep it (and its members) too.
+        val base = c.type("Base", supertypes = listOf("AppCompatActivity"))
+        val show = c.fn("show")
+        val main = c.type("Main", methods = listOf(show), supertypes = listOf("Base"))
+        val config = UnusedConfig(keepAliveSupertypes = setOf("Activity"))
+        val report = UnusedDetector(listOf(unit(types = listOf(base, main))), { c }, config).detect()
+        val names = report.unused.map { it.displayName }
+        names shouldNotContain "Base"
+        names shouldNotContain "Main"
+        names shouldNotContain "Main.show()"
+    }
+
+    @Test
+    fun `supertype matching is a case-sensitive suffix - CamelCase bounds it`() {
+        val c = FakeClassifier()
+        // GridView ends with `View` (kept); Preview's lowercase tail does NOT match `View`.
+        val widget = c.type("Chart", supertypes = listOf("GridView"))
+        val preview = c.type("Thumb", supertypes = listOf("Preview"))
+        val config = UnusedConfig(keepAliveSupertypes = setOf("View"))
+        val report = UnusedDetector(listOf(unit(types = listOf(widget, preview))), { c }, config).detect()
+        val names = report.unused.map { it.displayName }
+        names shouldNotContain "Chart"
+        names shouldContain "Thumb"
+    }
+
+    @Test
+    fun `without configured supertypes an extending type is still reported`() {
+        val c = FakeClassifier()
+        val activity = c.type("MainActivity", supertypes = listOf("AppCompatActivity"))
+        val report = UnusedDetector(listOf(unit(types = listOf(activity))), { c }).detect()
+        report.unused.map { it.displayName } shouldContain "MainActivity"
+    }
+
     @Test
     fun `Kotlin internal is part of the reportable surface`() {
         val c = FakeClassifier()

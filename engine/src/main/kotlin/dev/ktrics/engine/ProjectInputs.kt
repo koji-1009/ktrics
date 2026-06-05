@@ -36,6 +36,7 @@ object ProjectInputs {
                         resolved.config.unused.presets,
                         resolved.config.unused.ignoreAnnotations,
                     ),
+                keepAliveSupertypes = Presets.keepAliveSupertypes(resolved.config.unused.presets),
             )
         // `--include-tests` widens the report into test trees, which are excluded by default.
         return if (includeTests) base.copy(testGlobs = emptyList()) else base

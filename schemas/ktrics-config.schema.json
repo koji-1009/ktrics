@@ -84,7 +84,7 @@
         "presets": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Framework presets; unknown values are silently ignored (forward-compat)."
+          "description": "Framework keep-alive presets: lombok, jpa, jackson, spring, kotlinx-serialization, room, compose, parcelize, moshi, dagger, android, ktor. Unknown values are silently ignored (forward-compat)."
         }
       },
       "additionalProperties": false
