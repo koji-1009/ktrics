@@ -1,5 +1,8 @@
 package dev.ktrics.report
 
+import dev.ktrics.ir.CallGraphSignal
+import dev.ktrics.ir.StaleDismissal
+import dev.ktrics.ir.UnusedEntry
 import dev.ktrics.metric.Violation
 
 /**
@@ -20,12 +23,26 @@ class AiReporter(
 ) : Reporter {
     override fun render(report: AnalysisReport): String =
         buildString {
+            // Cap every section up front so `counts:` is written from the SAME kept lists the
+            // sections then render — derived twice, the numbers could drift.
+            val (violations, violationsDropped) = cap(Actionability.sort(report.violations))
+            val (unused, unusedDropped) = cap(report.unused)
+            val (stale, staleDropped) = cap(report.staleDismissals)
+            val (signals, signalsDropped) = cap(sortBySignalConnectivity(report.signals))
             appendHeader(report)
-            val violationsDropped = appendViolations(report)
-            val unusedDropped = appendUnused(report)
-            val signalsDropped = appendSignals(report)
-            appendTruncated(violationsDropped, unusedDropped, signalsDropped)
+            appendCounts(violations.size, unused.size, stale.size, signals.size)
+            appendViolations(violations)
+            appendUnused(unused)
+            appendSignals(signals)
+            appendStaleDismissals(stale)
+            appendTruncated(violationsDropped, unusedDropped, staleDropped, signalsDropped)
         }
+
+    /** Applies the per-section [limit] cap; returns (kept, dropped count). */
+    private fun <T> cap(items: List<T>): Pair<List<T>, Int> {
+        val kept = limit?.let { items.take(it) } ?: items
+        return kept to (items.size - kept.size)
+    }
 
     private fun StringBuilder.appendHeader(report: AnalysisReport) {
         appendLine(AnalysisReport.AI_HEADER)
@@ -39,38 +56,59 @@ class AiReporter(
         }
     }
 
-    /** Emits the violations block (sorted by actionability, capped by [limit]); returns the count dropped. */
-    private fun StringBuilder.appendViolations(report: AnalysisReport): Int {
-        val sorted = Actionability.sort(report.violations)
-        val kept = limit?.let { sorted.take(it) } ?: sorted
+    /**
+     * Per-section totals in ONE place (all four sections share the `  - file:` entry shape, so an
+     * agent that greps to count findings over-counts — the dartrics 1.1.0 fix).
+     */
+    private fun StringBuilder.appendCounts(
+        violations: Int,
+        unused: Int,
+        staleDismissals: Int,
+        signals: Int,
+    ) {
+        appendLine("# Entries included per section. With --limit, dropped tails")
+        appendLine("# land in a trailing truncated block (total = counts + drops).")
+        appendLine("counts:")
+        appendLine("  violations: $violations")
+        appendLine("  unused: $unused")
+        appendLine("  staleDismissals: $staleDismissals")
+        appendLine("  signals: $signals")
+    }
+
+    /** Emits the violations block (sorted by actionability, capped by [limit]). */
+    private fun StringBuilder.appendViolations(kept: List<Violation>) {
         if (kept.isEmpty()) {
             appendLine("violations: []")
         } else {
             appendLine("violations:")
             for (v in kept) appendViolation(v)
         }
-        return sorted.size - kept.size
     }
 
     private fun StringBuilder.appendTruncated(
         violations: Int,
         unused: Int,
+        staleDismissals: Int,
         signals: Int,
     ) {
-        if (violations <= 0 && unused <= 0 && signals <= 0) return
+        val drops =
+            listOf(
+                "violations" to violations,
+                "unused" to unused,
+                "staleDismissals" to staleDismissals,
+                "signals" to signals,
+            ).filter { it.second > 0 }
+        if (drops.isEmpty()) return
         appendLine("truncated:")
-        if (violations > 0) appendLine("  violations: $violations")
-        if (unused > 0) appendLine("  unused: $unused")
-        if (signals > 0) appendLine("  signals: $signals")
+        drops.forEach { (section, dropped) -> appendLine("  $section: $dropped") }
     }
 
     /**
      * Unreachable public declarations (reference, not a verdict): a 0-reachability reading can be
-     * genuine dead code OR an unwired implementation. Returns the count dropped to honour [limit].
+     * genuine dead code OR an unwired implementation.
      */
-    private fun StringBuilder.appendUnused(report: AnalysisReport): Int {
-        if (report.unused.isEmpty()) return 0
-        val kept = limit?.let { report.unused.take(it) } ?: report.unused
+    private fun StringBuilder.appendUnused(kept: List<UnusedEntry>) {
+        if (kept.isEmpty()) return
         appendLine("# Unused entries may be leftover code to delete OR unwired implementations")
         appendLine("# (declared but never reached — a possible wiring gap). Confirm against intent first.")
         appendLine("unused:")
@@ -79,22 +117,35 @@ class AiReporter(
             appendLine("    line: ${u.line}")
             appendLine("    kind: ${u.kind}")
             appendLine("    name: ${u.name}")
+            appendSnippet(u.file, u.line, indent = "    ")
         }
-        return report.unused.size - kept.size
     }
+
+    /** Dismissal directives whose violation no longer fires — dead suppressions to remove. */
+    private fun StringBuilder.appendStaleDismissals(kept: List<StaleDismissal>) {
+        if (kept.isEmpty()) return
+        appendLine("# Dismissals whose violation no longer fires — the suppression is dead; remove the directive.")
+        appendLine("staleDismissals:")
+        for (s in kept) {
+            appendLine("  - source: ${s.source}")
+            s.file?.let { appendLine("    file: $it") }
+            s.line?.let { appendLine("    line: $it") }
+            s.metric?.let { appendLine("    metric: $it") }
+            s.scope?.let { appendLine("    scope: $it") }
+            s.id?.let { appendLine("    id: $it") }
+            appendLine("    reason: ${quote(s.reason)}")
+        }
+    }
+
+    private fun sortBySignalConnectivity(signals: List<CallGraphSignal>): List<CallGraphSignal> =
+        signals.sortedWith(compareByDescending<CallGraphSignal> { it.fanInCallers }.thenByDescending { it.fanOutCallees })
 
     /**
      * Per-declaration fan-in/fan-out from the resolved call graph — reference values, NOT findings.
-     * Sorted so the most-connected scopes lead and the `0/0` tail is what [limit] truncates. Returns
-     * the count dropped.
+     * Sorted so the most-connected scopes lead and the `0/0` tail is what [limit] truncates.
      */
-    private fun StringBuilder.appendSignals(report: AnalysisReport): Int {
-        if (report.signals.isEmpty()) return 0
-        val sorted =
-            report.signals.sortedWith(
-                compareByDescending<dev.ktrics.ir.CallGraphSignal> { it.fanInCallers }.thenByDescending { it.fanOutCallees },
-            )
-        val kept = limit?.let { sorted.take(it) } ?: sorted
+    private fun StringBuilder.appendSignals(kept: List<CallGraphSignal>) {
+        if (kept.isEmpty()) return
         appendLine("# Reference values from the call graph — compare against intent, NOT verdicts.")
         appendLine("# A high fan-in is not \"bad\"; a 0 fan-in on a public API is a possible wiring gap.")
         appendLine("signals:")
@@ -108,7 +159,6 @@ class AiReporter(
             appendLine("    fanOutCallees: ${s.fanOutCallees}")
             appendLine("    fanOutCalls: ${s.fanOutCalls}")
         }
-        return sorted.size - kept.size
     }
 
     private fun StringBuilder.appendViolation(v: Violation) {
@@ -135,7 +185,7 @@ class AiReporter(
                 v.references.forEach { appendLine("      - ${quote(it)}") }
             }
         }
-        appendSnippet(v)
+        appendSnippet(v.file, v.span.startLine, indent = "    ")
     }
 
     private fun StringBuilder.appendDismissal(v: Violation) {
@@ -146,14 +196,18 @@ class AiReporter(
         }
     }
 
-    private fun StringBuilder.appendSnippet(v: Violation) {
-        val (firstLine, lines) = sources.lines(v.file, v.span.startLine - SNIPPET_RADIUS, v.span.startLine + SNIPPET_RADIUS)
+    private fun StringBuilder.appendSnippet(
+        file: String,
+        targetLine: Int,
+        indent: String,
+    ) {
+        val (firstLine, lines) = sources.lines(file, targetLine - SNIPPET_RADIUS, targetLine + SNIPPET_RADIUS)
         if (lines.isEmpty()) return
-        appendLine("    snippet: |")
+        appendLine("${indent}snippet: |")
         lines.forEachIndexed { i, line ->
             val lineNo = firstLine + i
-            val marker = if (lineNo == v.span.startLine) ">" else " "
-            appendLine("      $marker ${lineNo.toString().padStart(4)}| $line")
+            val marker = if (lineNo == targetLine) ">" else " "
+            appendLine("$indent  $marker ${lineNo.toString().padStart(4)}| $line")
         }
     }
 

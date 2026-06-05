@@ -100,20 +100,18 @@ class UnusedDetector(
         val byKey = decls.associateBy { it.key }
         val bySimpleName = decls.groupBy { it.key.substringAfterLast('.') }
 
-        // Roots: main, entry/keep-alive annotated declarations.
-        val roots = decls.filter { isRoot(it) }
+        // A keep-alive annotation on a TYPE covers its members too (a @Serializable/@Entity class is
+        // touched reflectively as a whole), so members of kept types are seeded as roots and never
+        // reported — the dartrics annotation-propagation rule.
+        val keptTypeKeys = decls.filterTo(ArrayList()) { it.kind !in MEMBER_KINDS && isKeptAlive(it) }.mapTo(HashSet()) { it.key }
+
+        // Roots: main, entry/keep-alive annotated declarations, members of kept-alive types.
+        val roots = decls.filter { isRoot(it) || isMemberOfKeptType(it, keptTypeKeys) }
         val reachable = bfs(roots, byKey, bySimpleName)
 
         val unused =
-            decls.filter { d ->
-                d.reportable &&
-                    isReportableSurface(d) &&
-                    !isGenerated(d.file) &&
-                    !isTest(d.file) &&
-                    !isKeptAlive(d) &&
-                    d.key !in reachable &&
-                    !d.isMain
-            }.map { UnusedSymbol(it.key, it.displayName, it.kind, it.visibility, it.file, it.span, it.lang, it.topLevel) }
+            decls.filter { isReportedUnused(it, reachable, keptTypeKeys) }
+                .map { UnusedSymbol(it.key, it.displayName, it.kind, it.visibility, it.file, it.span, it.lang, it.topLevel) }
 
         return UnusedReport(
             unused = unused.sortedWith(compareBy({ it.file }, { it.span.startLine })),
@@ -307,6 +305,21 @@ class UnusedDetector(
         bySimple: Map<String, List<Decl>>,
     ): List<Decl> = byKey[ref]?.let { listOf(it) } ?: bySimple[ref.substringAfterLast('.')].orEmpty()
 
+    /** The full reported-as-unused predicate: reportable surface, not excluded, not kept, not reached. */
+    private fun isReportedUnused(
+        d: Decl,
+        reachable: Set<String>,
+        keptTypeKeys: Set<String>,
+    ): Boolean =
+        d.reportable &&
+            isReportableSurface(d) &&
+            !isGenerated(d.file) &&
+            !isTest(d.file) &&
+            !isKeptAlive(d) &&
+            !isMemberOfKeptType(d, keptTypeKeys) &&
+            d.key !in reachable &&
+            !d.isMain
+
     private fun isRoot(d: Decl): Boolean {
         if (d.isMain && "main" in config.entryPoints) return true
         // An override of an out-of-project supertype member (Runnable.run, equals/hashCode, a framework
@@ -319,6 +332,12 @@ class UnusedDetector(
     }
 
     private fun isKeptAlive(d: Decl): Boolean = d.annotations.any { it in config.keepAliveAnnotations }
+
+    /** True when [d]'s key sits under a kept-alive type's key (`pkg.Type` covers `pkg.Type.member`). */
+    private fun isMemberOfKeptType(
+        d: Decl,
+        keptTypeKeys: Set<String>,
+    ): Boolean = keptTypeKeys.any { key -> d.key.length > key.length && d.key.startsWith(key) && d.key[key.length] == '.' }
 
     /**
      * The visibility surface the detector reports on, by language: Java public/protected, Kotlin
@@ -350,5 +369,10 @@ class UnusedDetector(
     private fun resolutionOf(decls: List<Decl>): Resolution {
         val edges = decls.mapNotNull { it.edgeResolution }
         return Resolution.weakest(edges.ifEmpty { listOf(Resolution.NAME_BASED) })
+    }
+
+    private companion object {
+        /** Declaration kinds that are members, not types — the complement defines "type" for keep-alive propagation. */
+        val MEMBER_KINDS = setOf("function", "method", "property")
     }
 }

@@ -22,6 +22,9 @@ object JacocoParser {
                 setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
                 setFeature("http://xml.org/sax/features/external-general-entities", false)
                 setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+                // Caps INTERNAL entity expansion too (billion-laughs); doctype itself stays allowed
+                // because real JaCoCo reports carry one.
+                setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true)
                 isValidating = false
             }
         val doc = factory.newDocumentBuilder().parse(xml.byteInputStream())

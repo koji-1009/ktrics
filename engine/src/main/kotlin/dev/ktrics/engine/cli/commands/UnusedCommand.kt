@@ -1,5 +1,6 @@
 package dev.ktrics.engine.cli.commands
 
+import dev.ktrics.engine.ExcludeFilter
 import dev.ktrics.engine.GraphSource
 import dev.ktrics.engine.ProjectInputs
 import dev.ktrics.engine.WarmIndexCache
@@ -30,12 +31,18 @@ object UnusedCommand : CommandHandler {
         }
         val target = ctx.firstPositional()?.let { resolveTarget(ctx, it) } ?: ctx.projectRoot
         val resolved = GraphSource.resolve(ctx, target)
-        val warm = WarmIndexCache.get(ctx.projectRoot, resolved.graph, resolved.configHash, resolved.resolved)
+        if (!GraphSource.reportConfig(ctx, resolved)) return Exit.BAD_CONFIG
         val classifierFor = ProjectInputs.classifierFor(ctx.projectRoot, resolved.resolved)
         val unusedConfig = ProjectInputs.unusedConfig(resolved, includeTests = ctx.flag("--include-tests"))
 
-        val full = UnusedDetector(warm.units, classifierFor, unusedConfig).detect()
-        val report = applyFilter(full, ctx.option("--filter"))
+        // withWarm (not a bare get): the sweep traverses PSI under the cache monitor, so a concurrent
+        // request cannot rebuild the cache and dispose the session mid-traversal.
+        val full =
+            WarmIndexCache.withWarm(ctx.projectRoot, resolved.graph, resolved.configHash, resolved.resolved) { warm ->
+                UnusedDetector(warm.units, classifierFor, unusedConfig).detect()
+            }
+        val exclude = ExcludeFilter(resolved.config.exclude)
+        val report = applyFilter(full.copy(unused = full.unused.filterNot { exclude.excludes(it.file) }), ctx.option("--filter"))
 
         if (reporter == "ai") renderAi(ctx, report) else renderConsole(ctx, report)
 
@@ -140,12 +147,36 @@ object UnusedCommand : CommandHandler {
             val newline = if (raw.contains("\r\n")) "\r\n" else "\n"
             val hadTrailingNewline = raw.endsWith("\n")
             val lines = contentLines(raw, hadTrailingNewline)
-            removed += removeSpans(lines, syms)
+            removed += removeSpans(lines, syms.filter { ownsItsLines(lines, it) })
             // Preserve the original newline style and trailing newline rather than forcing LF + no-EOL.
             val body = lines.joinToString(newline)
             file.writeText(if (hadTrailingNewline && lines.isNotEmpty()) body + newline else body)
         }
         return removed
+    }
+
+    /**
+     * Whole-node deletions only (the dartrics 0.8.0 contract): a symbol is auto-deletable only when
+     * nothing but whitespace shares its first and last physical line — `val live = 1; val dead = 2`
+     * must not lose `live` to a line-granular removal of `dead`. A skipped symbol stays reported,
+     * just not auto-deleted. Internal for direct unit coverage.
+     */
+    internal fun ownsItsLines(
+        lines: List<String>,
+        s: UnusedSymbol,
+    ): Boolean {
+        val first = lines.getOrNull(s.span.startLine - 1) ?: return false
+        if (first.take((s.span.startColumn - 1).coerceAtLeast(0)).isNotBlank()) return false
+        // Mirror removeSpans: a span ending at column 1 stops at the START of endLine without occupying it.
+        var lastLine = s.span.endLine
+        var endColumn = s.span.endColumn
+        if (endColumn <= 1 && lastLine > s.span.startLine) {
+            lastLine -= 1
+            endColumn = Int.MAX_VALUE // the whole previous line belongs to the span
+        }
+        val last = lines.getOrNull(lastLine - 1) ?: return false
+        val tail = if (endColumn == Int.MAX_VALUE) "" else last.drop((endColumn - 1).coerceAtLeast(0))
+        return tail.isBlank()
     }
 
     /**

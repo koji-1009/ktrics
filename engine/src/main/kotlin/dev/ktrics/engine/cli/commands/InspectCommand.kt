@@ -32,8 +32,13 @@ object InspectCommand : CommandHandler {
     override fun run(ctx: CommandContext): Int {
         val args = parseArgs(ctx) ?: return Exit.USAGE
         val resolved = GraphSource.resolve(ctx, ctx.projectRoot)
-        val warm = WarmIndexCache.get(ctx.projectRoot, resolved.graph, resolved.configHash, resolved.resolved)
-        val graph = CallGraph.build(warm.units, ProjectInputs.classifierFor(ctx.projectRoot, resolved.resolved))
+        if (!GraphSource.reportConfig(ctx, resolved)) return Exit.BAD_CONFIG
+        // withWarm (not a bare get): the graph build traverses PSI under the cache monitor, so a
+        // concurrent request cannot rebuild the cache and dispose the session mid-traversal.
+        val graph =
+            WarmIndexCache.withWarm(ctx.projectRoot, resolved.graph, resolved.configHash, resolved.resolved) { warm ->
+                CallGraph.build(warm.units, ProjectInputs.classifierFor(ctx.projectRoot, resolved.resolved))
+            }
         val result = graph.inspect(args.symbol, args.depth, args.direction)
 
         val text = if (args.reporter == "json") renderJson(result) else renderAi(result)

@@ -296,4 +296,45 @@ class UnusedCommandTest {
             repo.deleteRecursively()
         }
     }
+
+    // --- whole-node deletion guard: a span must own its physical lines to be auto-deletable ---
+
+    private fun symbolAt(
+        startLine: Int,
+        startColumn: Int,
+        endLine: Int,
+        endColumn: Int,
+    ): dev.ktrics.unused.UnusedSymbol =
+        dev.ktrics.unused.UnusedSymbol(
+            key = "pkg.dead",
+            displayName = "dead",
+            kind = "property",
+            visibility = dev.ktrics.ir.Visibility.PUBLIC,
+            file = "X.kt",
+            span = dev.ktrics.ir.Span("X.kt", startLine, startColumn, endLine, endColumn, 0, 0),
+            lang = dev.ktrics.ir.Lang.KOTLIN,
+            topLevel = true,
+        )
+
+    @Test
+    fun `a declaration alone on its lines is deletable`() {
+        val lines = listOf("package pkg", "", "val dead = 2")
+        UnusedCommand.ownsItsLines(lines, symbolAt(3, 1, 3, 13)) shouldBe true
+    }
+
+    @Test
+    fun `a declaration sharing its line with a live sibling is NOT deletable`() {
+        // `val live = 1; val dead = 2` — line-granular removal of `dead` would take `live` with it.
+        val lines = listOf("package pkg", "", "val live = 1; val dead = 2")
+        UnusedCommand.ownsItsLines(lines, symbolAt(3, 15, 3, 27)) shouldBe false
+        // And the leading sibling is just as coupled: text trails ITS last line.
+        UnusedCommand.ownsItsLines(lines, symbolAt(3, 1, 3, 13)) shouldBe false
+    }
+
+    @Test
+    fun `a multi-line declaration ending at column one owns the previous line`() {
+        // PSI ranges ending at column 1 stop at the START of endLine (the removeSpans convention).
+        val lines = listOf("fun dead() {", "    return", "}", "val next = 1")
+        UnusedCommand.ownsItsLines(lines, symbolAt(1, 1, 4, 1)) shouldBe true
+    }
 }

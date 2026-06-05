@@ -14,6 +14,13 @@ data class Dismissal(
     val scope: String? = null,
 )
 
+/** One comment-channel directive as found in a file: its 1-based line, target metric (null = all), reason. */
+data class CommentDirective(
+    val line: Int,
+    val metric: String?,
+    val reason: String,
+)
+
 /** Default minimum reason length below which a dismissal is rejected and the violation stays live. */
 const val DEFAULT_MIN_REASON_LENGTH: Int = 12
 

@@ -55,13 +55,25 @@ class RegressionTest {
     }
 
     @Test
-    fun `an informational metric never regresses or improves`() {
+    fun `an informational metric that moved is NEUTRAL_DELTA, never regressed or improved`() {
+        // The movement is a real signal (dartrics' neutralDelta) — it just carries no verdict.
         val before = listOf(result("types-per-file", "F", 2.0))
         val after = listOf(result("types-per-file", "F", 9.0))
         val report = Regression.compare(before, after)
-        report.entries.single().change shouldBe Change.UNCHANGED
+        report.entries.single().change shouldBe Change.NEUTRAL_DELTA
+        report.neutralDelta shouldBe 1
         report.regressed shouldBe 0
         report.improved shouldBe 0
+        report.unchanged shouldBe 0
+    }
+
+    @Test
+    fun `an informational metric that did not move stays UNCHANGED`() {
+        val before = listOf(result("types-per-file", "F", 2.0))
+        val after = listOf(result("types-per-file", "F", 2.0))
+        val report = Regression.compare(before, after)
+        report.entries.single().change shouldBe Change.UNCHANGED
+        report.neutralDelta shouldBe 0
     }
 
     @Test
@@ -100,14 +112,14 @@ class RegressionTest {
                     add(result("source-lines-of-code", "helper$i", 3.0))
                 }
             }
-        Regression.compare(before, after).cosmeticRefactorSuspected shouldBe true
+        Regression.compare(before, after).cosmeticSplitDetected shouldBe true
     }
 
     @Test
     fun `genuine simplification is not flagged cosmetic`() {
         val before = listOf(result("cyclomatic-complexity", "big", 20.0), result("source-lines-of-code", "big", 80.0))
         val after = listOf(result("cyclomatic-complexity", "big", 8.0), result("source-lines-of-code", "big", 40.0))
-        Regression.compare(before, after).cosmeticRefactorSuspected shouldBe false
+        Regression.compare(before, after).cosmeticSplitDetected shouldBe false
     }
 
     // --- cosmetic-refactor heuristic boundaries: tinyHelpers >= 3 AND slocDelta > 4*h AND ccReduction < 2*h ---
@@ -125,7 +137,7 @@ class RegressionTest {
                     add(result("source-lines-of-code", "h$i", 3.0))
                 }
             }
-        Regression.compare(before, after).cosmeticRefactorSuspected shouldBe false
+        Regression.compare(before, after).cosmeticSplitDetected shouldBe false
     }
 
     @Test
@@ -140,7 +152,7 @@ class RegressionTest {
                 add(result("cyclomatic-complexity", "h1", 1.0))
                 add(result("cyclomatic-complexity", "h2", 3.0))
             }
-        Regression.compare(before, after).cosmeticRefactorSuspected shouldBe false
+        Regression.compare(before, after).cosmeticSplitDetected shouldBe false
     }
 
     @Test
@@ -156,7 +168,7 @@ class RegressionTest {
                     add(result("source-lines-of-code", "h$i", 4.0))
                 }
             }
-        Regression.compare(before, after).cosmeticRefactorSuspected shouldBe false
+        Regression.compare(before, after).cosmeticSplitDetected shouldBe false
     }
 
     @Test
@@ -173,6 +185,6 @@ class RegressionTest {
                     add(result("source-lines-of-code", "h$i", 4.0))
                 }
             }
-        Regression.compare(before, after).cosmeticRefactorSuspected shouldBe false
+        Regression.compare(before, after).cosmeticSplitDetected shouldBe false
     }
 }

@@ -10,7 +10,7 @@ The loop is four stations: **analyze → fix → regression → confirm.** ktric
 ktrics analyze . --reporter ai
 ```
 
-Output begins with the contractual header `# ktrics ai-report v1` and lists violations sorted by **actionability** (errors first, then by how far past the threshold). Every violation carries, inline:
+Output begins with the contractual header `# ktrics ai-report v1`, then a `counts:` block naming each section's entry total (`violations` / `unused` / `staleDismissals` / `signals`). **Read totals from `counts:`** — all four sections share the `- file:` entry shape, so grepping to count findings over-counts. With `--limit`, dropped tails land in a trailing `truncated:` block (section total = counts + drops). Violations are sorted by **actionability** (errors first, then by how far past the threshold). Every violation carries, inline:
 
 - `id` — stable across runs (`sha256("file|scope|metric")`, 16 hex). The same finding keeps the same id even as line numbers move, so you can tell whether your fix actually landed.
 - `metric`, `severity`, `value`, `threshold`, `polarity`.
@@ -20,10 +20,13 @@ Output begins with the contractual header `# ktrics ai-report v1` and lists viol
 - `snippet` — the offending line ± 3.
 - `complexityJustified: true` — (with `--coverage`) the complex method has ≥ 0.8 branch coverage; consider accepting rather than refactoring.
 
-After the violations, the same report carries two **reference-only** blocks (no severity, never a gate):
+After the violations, the same report carries three **reference-only** blocks (no severity, never a gate):
 
-- `unused:` — unreachable public-API declarations. Read each **as a question, not a verdict**: a 0-reachability reading can be genuine dead code OR an *unwired implementation* (the caller integration never landed) OR a reflective/generated consumer the static graph can't see. Confirm against intent before deleting.
+- `unused:` — unreachable public-API declarations, each with its own `snippet`. Read each **as a question, not a verdict**: a 0-reachability reading can be genuine dead code OR an *unwired implementation* (the caller integration never landed) OR a reflective/generated consumer the static graph can't see. Confirm against intent before deleting.
 - `signals:` — per-declaration `fanInCallers` / `fanInCalls` / `fanOutCallees` / `fanOutCalls` from the call graph, for the scopes that fired. A high fan-in is not "bad"; a 0 fan-in on a public API is a possible wiring gap. Feed it into the refactor / dismiss decision — don't treat it as a finding. `--limit` truncates the `0/0` tail and stamps a `truncated:` block.
+- `staleDismissals:` — dismissal directives whose violation no longer fires (fixed, renamed, below threshold). The suppression is dead: remove the directive so it can't mask a future regression.
+
+`--since <ref>` keeps the violations **scope-granular**: only declarations a diff hunk actually touched re-surface — an untouched sibling in a changed file stays out, and a pure rename surfaces nothing. (`unused:` stays file-granular: reachability is relational, so a change elsewhere can legitimately flip it.)
 
 By default ktrics **gates on function-level lenses** (cyclomatic, cognitive, nesting, parameters, boolean-trap, SLOC, Kotlin `!!`/scope-fn; npath is measure-only — its product-form estimate over-counts guard clauses). Class- and package-level lenses (CK suite, Martin) are **measure-only** — they surface in `json`/`md` and via `--reporter ai` only when you set a threshold in `ktrics.yaml`. This keeps the failing set tight and actionable.
 
@@ -61,7 +64,7 @@ Apply a refactor. Re-run `ktrics analyze . --reporter ai`. Compare ids:
 ktrics regression --before HEAD~1 --after HEAD --reporter ai
 ```
 
-Per-scope per-metric deltas, classified `improved` / `regressed` / `unchanged` / `added` / `removed` by polarity. A **cosmetic-refactor** heuristic flags churn that merely shuffles code without reducing complexity (many tiny helpers added, SLOC up, complexity barely down) — so an agent can't "win" by extracting noise. `--reporter ai|json|console` picks the shape; `--metric <ids>` restricts the diff to specific metrics; `--output <file>` writes it.
+Per-scope per-metric deltas, classified `improved` / `regressed` / `unchanged` / `neutralDelta` / `added` / `removed` by polarity (`neutralDelta` = an informational metric that moved; there is no better/worse verdict to attach). `cosmeticSplitDetected` flags churn that merely shuffles code without reducing complexity (many tiny helpers added, SLOC up, complexity barely down) — so an agent can't "win" by extracting noise. It is a **narrow heuristic, not a global verdict**: `false` only means that one signature did not match. `--reporter ai|json|console` picks the shape; `--metric <ids>` restricts the diff to specific metrics; `--output <file>` writes it. Both refs are analyzed on the project's own subtree — a project rooted in a repo subdirectory diffs the matching subdirectory at each ref, under that subtree's `ktrics.yaml`.
 
 ## Station 4 — confirm, then accept or dismiss
 
@@ -78,6 +81,8 @@ int classify(PsiElement n) { ... }
 ```
 
 Same syntax for both languages. A YAML sidecar `ktrics-dismissals.yaml` is also honored and **wins on collision** (useful for bulk or id-keyed dismissals). A reason shorter than `minReasonLength` keeps the violation **live** with a `dismissalRejected` flag — so a drive-by `reason="wontfix"` doesn't silence anything. `--strict-dismiss` ignores every dismissal (for a clean-slate audit).
+
+When a later run no longer fires the violation a directive suppressed, the directive surfaces under `staleDismissals:` (and a stderr WARN) — delete it as part of the same iteration, exactly like a vanished violation id confirms a fix.
 
 ## The unused-detector loop
 

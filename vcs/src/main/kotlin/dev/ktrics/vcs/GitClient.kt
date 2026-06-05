@@ -28,6 +28,12 @@ class GitClient(
 ) {
     fun isRepository(): Boolean = run("rev-parse", "--is-inside-work-tree").trim() == "true"
 
+    /** The repository toplevel directory, or null outside a repository. */
+    fun topLevel(): File? {
+        val (out, code) = runChecked("rev-parse", "--show-toplevel")
+        return out.trim().takeIf { code == 0 && it.isNotEmpty() }?.let(::File)
+    }
+
     /** True when the working tree has no uncommitted changes — `unused --apply` requires this. */
     fun isClean(): Boolean = run("status", "--porcelain").isBlank()
 
@@ -38,10 +44,23 @@ class GitClient(
         return out.trim()
     }
 
-    /** Files changed between [ref] and the working tree (for `--since`). */
-    fun changedFilesSince(ref: String): List<String> {
+    /**
+     * Working-tree line ranges changed since [ref], keyed by file path RELATIVE TO the [workTree]
+     * directory (`--relative` — so a project rooted in a repo subdirectory keys match the analyzer's
+     * projectRoot-relative paths, and changes outside the subtree are excluded). `-U0` hunks are in
+     * working-tree coordinates, ready to intersect with scope spans; `-M` folds a pure rename into a
+     * hunk-less entry that surfaces nothing (dartrics 1.1.0 semantics); the pathspec keeps the diff to
+     * the source files the analyzer can attribute. A deletion-only hunk marks the single join line.
+     */
+    fun changedLineRangesSince(ref: String): Map<String, List<IntRange>> {
         resolve(ref)
-        return run("diff", "--name-only", ref, "--").lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+        val diff =
+            run(
+                // Unquoted (raw) paths so a non-ASCII filename matches the analyzer's path string.
+                "-c", "core.quotePath=false",
+                "diff", "--relative", "--unified=0", "-M", "--diff-filter=AMR", ref, "--", "*.kt", "*.java",
+            )
+        return parseUnifiedZeroRanges(diff)
     }
 
     /** Materialises [ref] into a detached worktree at [dir] (for analyzing a past revision). */
@@ -81,7 +100,7 @@ class GitClient(
         }
         // The process has exited, so its stdout is at (or racing to) EOF — join UNBOUNDED so a large
         // `git diff` is read in full. A bounded join here truncated big output to "" and made the
-        // caller (e.g. changedFilesSince) report 'no changes' on a successful command.
+        // caller (e.g. changedLineRangesSince) report 'no changes' on a successful command.
         reader.join()
         return (stdout[0] ?: "") to process.exitValue()
     }
@@ -92,5 +111,43 @@ class GitClient(
 
         /** Non-zero sentinel so a timed-out git is treated as failure (e.g. an unresolved ref → exit 65). */
         const val TIMED_OUT_CODE = 124
+    }
+}
+
+/**
+ * Parses unified-zero diff output into `new-file path → +c,d ranges` (1-based, inclusive). Pure so
+ * the hunk grammar is testable without a repository. A `+c,0` hunk is a pure deletion: it touches no
+ * current line but the join point is where the change "is" — mapped to the single line `max(c, 1)`
+ * (c is 0 when the deletion is at the top of the file).
+ */
+internal fun parseUnifiedZeroRanges(diff: String): Map<String, List<IntRange>> {
+    val ranges = LinkedHashMap<String, MutableList<IntRange>>()
+    var current: String? = null
+    for (line in diff.lineSequence()) {
+        when {
+            line.startsWith("+++ ") -> {
+                val path = line.removePrefix("+++ ").trim()
+                current = if (path == "/dev/null") null else path.removePrefix("b/")
+            }
+            line.startsWith("@@") -> {
+                val file = current ?: continue
+                val range = parseHunkPlusRange(line) ?: continue
+                ranges.getOrPut(file) { ArrayList() }.add(range)
+            }
+        }
+    }
+    return ranges
+}
+
+/** The `+c[,d]` side of one `@@ -a[,b] +c[,d] @@` header as an inclusive line range, or null if malformed. */
+private fun parseHunkPlusRange(header: String): IntRange? {
+    val plus = header.split(' ').firstOrNull { it.startsWith("+") } ?: return null
+    val start = plus.removePrefix("+").substringBefore(',').toIntOrNull() ?: return null
+    val count = plus.substringAfter(',', "1").toIntOrNull() ?: return null
+    return if (count == 0) {
+        val at = maxOf(start, 1) // pure deletion: mark the join line
+        at..at
+    } else {
+        start..(start + count - 1)
     }
 }

@@ -23,6 +23,39 @@ class UnusedReachabilityTest {
     }
 
     @Test
+    fun `a keep-alive annotation on a type covers its members`() {
+        val c = FakeClassifier()
+        // A @Serializable-style type whose public method is touched only reflectively (no in-project
+        // caller): the annotation keep-alive must propagate to members — dartrics' propagation rule.
+        val method = c.fn("toJson")
+        val entity = c.type("Payload", methods = listOf(method), annotations = listOf("Serializable"))
+        val plainMethod = c.fn("compute")
+        val plain = c.type("Plain", methods = listOf(plainMethod))
+        val config = UnusedConfig(keepAliveAnnotations = setOf("Serializable"))
+        val report = UnusedDetector(listOf(unit(types = listOf(entity, plain))), { c }, config).detect()
+        val names = report.unused.map { it.displayName }
+        names shouldNotContain "Payload"
+        names shouldNotContain "Payload.toJson()"
+        // The un-annotated control: its member is still reported, so the propagation is annotation-scoped.
+        names shouldContain "Plain.compute()"
+    }
+
+    @Test
+    fun `keep-alive propagation reaches nested types and stops at name prefixes`() {
+        val c = FakeClassifier()
+        val nestedMethod = c.fn("write")
+        val nested = c.type("Companion", pkg = "pkg.Payload", methods = listOf(nestedMethod))
+        val entity = c.type("Payload", nested = listOf(nested), annotations = listOf("Serializable"))
+        // `pkg.PayloadExtra` shares the kept key as a NAME prefix but is a different type — not covered.
+        val lookalike = c.type("PayloadExtra")
+        val config = UnusedConfig(keepAliveAnnotations = setOf("Serializable"))
+        val report = UnusedDetector(listOf(unit(types = listOf(entity, lookalike))), { c }, config).detect()
+        val names = report.unused.map { it.displayName }
+        names shouldNotContain "Companion.write()"
+        names shouldContain "PayloadExtra"
+    }
+
+    @Test
     fun `Kotlin internal is part of the reportable surface`() {
         val c = FakeClassifier()
         val internalOrphan = c.fn("internalOrphan", visibility = Visibility.INTERNAL)

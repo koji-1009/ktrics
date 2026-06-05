@@ -1,5 +1,6 @@
 package dev.ktrics.engine.cli
 
+import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
@@ -30,6 +31,14 @@ class CommandContextTest {
     fun `positionals skips a value-option's value and honours the -- terminator`() {
         ctx("--reporter", "ai", "src/", "--", "--weird")
             .positionals() shouldContainExactly listOf("src/", "--weird")
+    }
+
+    @Test
+    fun `the value-option table carries the documented value-consuming flags`() {
+        // The set drives positional parsing; bare flags must stay absent or they would eat a target.
+        CommandContext.VALUE_OPTIONS shouldContain "--reporter"
+        CommandContext.VALUE_OPTIONS shouldContain "--since"
+        (("--fatal-warnings") in CommandContext.VALUE_OPTIONS) shouldBe false
     }
 
     @Test

@@ -4,6 +4,7 @@ import dev.ktrics.config.KtricsConfig
 import dev.ktrics.coverage.CoverageData
 import dev.ktrics.coverage.JacocoParser
 import dev.ktrics.engine.AnalysisEngine
+import dev.ktrics.engine.ExcludeFilter
 import dev.ktrics.engine.GraphSource
 import dev.ktrics.engine.ProjectInputs
 import dev.ktrics.engine.ResolvedProject
@@ -35,6 +36,7 @@ object AnalyzeCommand : CommandHandler {
         val format = parseFormat(ctx) ?: return Exit.USAGE
         val coverage = loadCoverage(ctx) ?: return Exit.BAD_INPUT
         val resolved = GraphSource.resolve(ctx, target)
+        if (!GraphSource.reportConfig(ctx, resolved)) return Exit.BAD_CONFIG
         val snapshotMode = resolveSnapshotMode(ctx, resolved)
         val full =
             AnalysisEngine(
@@ -48,6 +50,8 @@ object AnalyzeCommand : CommandHandler {
                 includeMeasurements = snapshotMode != null,
                 excludeGlobs = resolved.config.exclude,
             ).analyze(resolved.graph)
+        full.warnings.forEach { ctx.sink.errLine("ktrics: warning: $it") }
+        warnStale(ctx, full)
 
         if (snapshotMode != null) handleSnapshot(ctx, snapshotMode, full)
         // Enrich with the unused: + signals: blocks (sibling of dartrics) before --since/limit shaping.
@@ -59,6 +63,20 @@ object AnalyzeCommand : CommandHandler {
         val text = Reporters.forFormat(format, sources, autoExplain = !ctx.flag("--no-auto-explain"), limit = limit).render(report)
         writeOutput(ctx, format, text)
         return if (ctx.flag("--fatal-warnings") && report.violations.isNotEmpty()) Exit.VIOLATIONS else Exit.OK
+    }
+
+    /** One stderr WARN naming each stale directive, so a loop learns its dismissals went dead. */
+    private fun warnStale(
+        ctx: CommandContext,
+        report: AnalysisReport,
+    ) {
+        if (report.staleDismissals.isEmpty()) return
+        ctx.sink.errLine(
+            "ktrics: ${report.staleDismissals.size} stale dismissal(s) — the violations they suppressed no longer fire; remove them:",
+        )
+        report.staleDismissals.forEach { s ->
+            ctx.sink.errLine("  [${s.source}] ${s.where()} ${s.metric ?: "(all metrics)"}")
+        }
     }
 
     private fun parseFormat(ctx: CommandContext): ReporterFormat? {
@@ -109,8 +127,12 @@ object AnalyzeCommand : CommandHandler {
     }
 
     /**
-     * Applies `--since` (filter to changed files); `--limit` (top-N) is the ai reporter's job now, so
-     * json/sarif keep the full set for `report`/regression. Signals follow the kept violation scopes.
+     * Applies `--since` — SCOPE-granular for violations (a hunk must intersect the violation's span,
+     * so an untouched sibling function no longer re-surfaces when its file changes; dartrics 1.1.0
+     * semantics), FILE-granular for `unused` (call-graph-relational: a change elsewhere can
+     * legitimately flip it on an untouched declaration). Pure renames carry no hunks and surface
+     * nothing. `--limit` (top-N) is the ai reporter's job, so json/sarif keep the full set for
+     * `report`/regression. Signals follow the kept violation scopes.
      */
     internal fun postProcess(
         ctx: CommandContext,
@@ -122,13 +144,16 @@ object AnalyzeCommand : CommandHandler {
             val git = GitClient(ctx.projectRoot)
             val changed =
                 try {
-                    git.changedFilesSince(ref).toSet()
+                    git.changedLineRangesSince(ref)
                 } catch (e: GitRefException) {
                     ctx.sink.errLine("ktrics: ${e.message}")
                     return null // → exit 65
                 }
-            violations = violations.filter { it.file in changed }
-            unused = unused.filter { it.file in changed }
+            violations =
+                violations.filter { v ->
+                    changed[v.file]?.any { hunk -> hunk.first <= v.span.endLine && hunk.last >= v.span.startLine } == true
+                }
+            unused = unused.filter { it.file in changed.keys }
         }
         val keptScopes = violations.map { it.scope }.toSet()
         val signals = report.signals.filter { it.scopeName in keptScopes }
@@ -153,14 +178,22 @@ object AnalyzeCommand : CommandHandler {
         resolved: ResolvedProject,
         report: AnalysisReport,
     ): AnalysisReport {
-        val warm = WarmIndexCache.get(ctx.projectRoot, resolved.graph, resolved.configHash, resolved.resolved)
-        val classifierFor = ProjectInputs.classifierFor(ctx.projectRoot, resolved.resolved)
-        val unused =
-            UnusedDetector(warm.units, classifierFor, ProjectInputs.unusedConfig(resolved)).detect().unused
-                .map { UnusedEntry(it.file, it.span.startLine, it.kind, it.displayName) }
-        val graph = CallGraph.build(warm.units, classifierFor)
-        val signals = report.violations.mapNotNull { graph.signalOf(it.scope) }.distinctBy { it.scopeName }
-        return report.copy(unused = unused, signals = signals)
+        // withWarm (not a bare get): the sweep + graph build traverse PSI and enter `analyze {}`, so
+        // they must hold the cache monitor — otherwise a concurrent request can rebuild the cache and
+        // dispose the session mid-traversal.
+        return WarmIndexCache.withWarm(ctx.projectRoot, resolved.graph, resolved.configHash, resolved.resolved) { warm ->
+            val classifierFor = ProjectInputs.classifierFor(ctx.projectRoot, resolved.resolved)
+            // `exclude:`d files are not reported on (here as everywhere) — but their declarations
+            // stayed in the graph, so their references keep other code alive.
+            val exclude = ExcludeFilter(resolved.config.exclude)
+            val unused =
+                UnusedDetector(warm.units, classifierFor, ProjectInputs.unusedConfig(resolved)).detect().unused
+                    .filterNot { exclude.excludes(it.file) }
+                    .map { UnusedEntry(it.file, it.span.startLine, it.kind, it.displayName) }
+            val graph = CallGraph.build(warm.units, classifierFor)
+            val signals = report.violations.mapNotNull { graph.signalOf(it.scope) }.distinctBy { it.scopeName }
+            report.copy(unused = unused, signals = signals)
+        }
     }
 
     /** Diffs against a stored snapshot baseline and (for `baseline` mode) updates it. */
@@ -177,7 +210,7 @@ object AnalyzeCommand : CommandHandler {
                 "ktrics snapshot: ${diff.improved} improved, ${diff.regressed} regressed, " +
                     "${diff.added} added, ${diff.removed} removed since baseline.",
             )
-            if (diff.cosmeticRefactorSuspected) ctx.sink.errLine("ktrics snapshot: cosmetic-refactor suspected.")
+            if (diff.cosmeticSplitDetected) ctx.sink.errLine("ktrics snapshot: cosmetic-split detected (narrow heuristic).")
         }
         if (mode == "baseline" || (mode == "cache" && !file.isFile)) {
             store.save(file, report.version, report.measurements)
@@ -185,25 +218,34 @@ object AnalyzeCommand : CommandHandler {
         }
     }
 
-    /** Loads `--coverage <path>` (JaCoCo XML), or empty for `none`/absent. Null on a bad path (→ 65). */
+    /**
+     * Loads `--coverage <path>[,<path>…]` (JaCoCo XML), or empty for `none`/absent. A multi-module
+     * build emits one report per module — a comma list merges them so cross-module coverage isn't
+     * silently incomplete. Null on any bad path (→ 65).
+     */
     @Suppress("TooGenericExceptionCaught")
     private fun loadCoverage(ctx: CommandContext): CoverageData? {
-        val path = ctx.option("--coverage") ?: return CoverageData.EMPTY
-        if (path.equals("none", ignoreCase = true)) return CoverageData.EMPTY
-        val file = ctx.resolvePath(path)
-        if (!file.isFile) {
-            ctx.sink.errLine("ktrics: coverage file not found: $path")
-            return null
+        val option = ctx.option("--coverage") ?: return CoverageData.EMPTY
+        if (option.equals("none", ignoreCase = true)) return CoverageData.EMPTY
+        var merged = CoverageData.EMPTY
+        for (path in option.split(',').map { it.trim() }.filter { it.isNotEmpty() }) {
+            val file = ctx.resolvePath(path)
+            if (!file.isFile) {
+                ctx.sink.errLine("ktrics: coverage file not found: $path")
+                return null
+            }
+            // A present-but-malformed XML (SAXParseException, IOException, …) is bad input, not an internal
+            // fault: catch it here so it maps to BAD_INPUT (65) via the same null path as a missing file,
+            // rather than escaping to Cli.run and being reported as INTERNAL (70).
+            merged =
+                try {
+                    merged.merge(JacocoParser.parse(file))
+                } catch (e: Exception) {
+                    ctx.sink.errLine("ktrics: could not parse coverage file '$path': ${e.message}")
+                    return null
+                }
         }
-        // A present-but-malformed XML (SAXParseException, IOException, …) is bad input, not an internal
-        // fault: catch it here so it maps to BAD_INPUT (65) via the same null path as a missing file,
-        // rather than escaping to Cli.run and being reported as INTERNAL (70).
-        return try {
-            JacocoParser.parse(file)
-        } catch (e: Exception) {
-            ctx.sink.errLine("ktrics: could not parse coverage file '$path': ${e.message}")
-            null
-        }
+        return merged
     }
 
     private fun resolve(

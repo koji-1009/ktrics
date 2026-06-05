@@ -21,6 +21,13 @@ interface SkipPolicy {
         unit: SourceUnit,
     ): Boolean = false
 
+    /**
+     * True when [unit] gets the test-DSL cognitive discount (closures handed to calls don't accrue
+     * to the enclosing function). Lives on the policy so "what test-awareness means" has ONE home —
+     * the config module implements it as `test:` AND [TestSources.isTestFile].
+     */
+    fun testDslDiscount(unit: SourceUnit): Boolean = false
+
     fun skipType(
         def: MetricDef,
         type: TypeDecl,

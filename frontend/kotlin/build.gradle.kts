@@ -5,4 +5,6 @@ dependencies {
     implementation(project(":ir"))
     implementation(project(":lang-api"))
     testImplementation(project(":test-session"))
+    // The operator-convention end-to-end test runs the unused sweep over this module's classifier.
+    testImplementation(project(":unused"))
 }

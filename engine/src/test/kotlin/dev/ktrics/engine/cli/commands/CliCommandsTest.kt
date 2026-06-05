@@ -72,6 +72,21 @@ class CliCommandsTest {
     }
 
     @Test
+    fun `doctor surfaces a malformed dismissals sidecar as a warning`() {
+        val root = createTempDirectory("doctor").toFile()
+        try {
+            File(root, "ktrics.yaml").writeText("ktrics: {}\n")
+            // A broken sidecar silently disables dismissal gating — doctor must say so.
+            File(root, "ktrics-dismissals.yaml").writeText("dismissals: [unclosed\n")
+            val sink = CapturingSink()
+            DoctorCommand.run(ctx(root, sink = sink)) shouldBe Exit.OK
+            sink.out.toString() shouldContain "dismissals sidecar: failed to parse"
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `doctor renders a warning (not an error) for an unknown unused preset`() {
         val root = createTempDirectory("doctor").toFile()
         try {

@@ -1,5 +1,6 @@
 package dev.ktrics.dismiss
 
+import dev.ktrics.ir.StaleDismissal
 import dev.ktrics.metric.DismissalState
 import dev.ktrics.metric.Violation
 import java.io.File
@@ -41,14 +42,47 @@ class DismissalApplier(
         return live to dismissed
     }
 
-    private fun sidecarMatch(v: Violation): Dismissal? =
-        sidecar.dismissals.firstOrNull { d ->
-            when {
-                d.id != null -> d.id == v.id
-                d.metric != null && d.scope != null -> d.metric == v.metricId && d.scope == v.scope
-                d.metric != null && d.file != null -> d.metric == v.metricId && d.file == v.file
-                else -> false
+    /**
+     * Directives that matched NO violation in this run (sibling of dartrics' `staleEntries`): the
+     * violation they suppressed is gone — fixed, renamed, or below threshold — so the directive should
+     * be removed. [violations] must be the PRE-dismissal set (a consumed-and-dismissed violation is
+     * not stale) and pre-`--since` (a filtered-out file would make its dismissals look stale).
+     * Comment directives are scanned over [analyzedFiles] only. Empty under `--strict-dismiss`
+     * (everything would read as stale).
+     */
+    fun staleDismissals(
+        violations: List<Violation>,
+        analyzedFiles: Collection<String>,
+    ): List<StaleDismissal> {
+        if (strict) return emptyList()
+        val staleSidecar =
+            sidecar.dismissals
+                .filter { d -> violations.none { v -> matches(d, v) } }
+                .map { StaleDismissal("sidecar", it.file, null, it.metric, it.scope, it.id, it.reason) }
+        val staleComments =
+            analyzedFiles.sorted().flatMap { file ->
+                val scan = comments(file) ?: return@flatMap emptyList()
+                val consumed =
+                    violations.filter { it.file == file }
+                        .mapNotNullTo(HashSet()) { v -> scan.directiveLineFor(v.span.startLine, v.metricId) }
+                scan.allDirectives()
+                    .filter { it.line !in consumed }
+                    .map { StaleDismissal("comment", file, it.line, it.metric, null, null, it.reason) }
             }
+        return staleSidecar + staleComments
+    }
+
+    private fun sidecarMatch(v: Violation): Dismissal? = sidecar.dismissals.firstOrNull { matches(it, v) }
+
+    private fun matches(
+        d: Dismissal,
+        v: Violation,
+    ): Boolean =
+        when {
+            d.id != null -> d.id == v.id
+            d.metric != null && d.scope != null -> d.metric == v.metricId && d.scope == v.scope
+            d.metric != null && d.file != null -> d.metric == v.metricId && d.file == v.file
+            else -> false
         }
 
     private fun commentMatch(v: Violation): Dismissal? = comments(v.file)?.forDeclaration(v.span.startLine, v.metricId)

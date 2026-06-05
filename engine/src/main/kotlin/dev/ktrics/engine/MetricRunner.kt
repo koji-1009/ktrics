@@ -43,7 +43,7 @@ class MetricRunner(
     fun run(units: List<SourceUnit>): RunOutput {
         val out = Out()
         for (unit in units) {
-            val ctx = MeasureContext(classifierFor(unit.lang), unit, index)
+            val ctx = MeasureContext(classifierFor(unit.lang), unit, index, isTestFile = skips.testDslDiscount(unit))
             runFunctionMetrics(ctx, out)
             runTypeMetrics(ctx, out)
             runFileMetrics(ctx, out)

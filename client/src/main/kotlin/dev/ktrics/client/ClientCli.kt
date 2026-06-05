@@ -17,7 +17,6 @@ internal object ClientCli {
         args: List<String>,
         cwd: File = File(System.getProperty("user.dir")).absoluteFile,
         env: Map<String, String> = System.getenv(),
-        columns: String? = System.getenv("COLUMNS"),
         runner: (File, ClientRequest) -> Int = { root, req -> run(root, req) },
     ): Int {
         when (args.firstOrNull()) {
@@ -31,7 +30,6 @@ internal object ClientCli {
                 argv = args,
                 cwd = cwd.absolutePath,
                 env = relayEnv(env),
-                terminalWidth = terminalWidth(columns),
             )
         return runner(resolveProjectRoot(args, cwd), request)
     }
@@ -101,6 +99,4 @@ internal object ClientCli {
             env.forEach { (k, v) -> if (k in keep || k.startsWith("KTRICS_")) put(k, v) }
         }
     }
-
-    fun terminalWidth(columns: String?): Int = columns?.toIntOrNull() ?: 0
 }

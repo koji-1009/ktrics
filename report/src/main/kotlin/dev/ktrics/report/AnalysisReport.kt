@@ -2,6 +2,7 @@ package dev.ktrics.report
 
 import dev.ktrics.ir.CallGraphSignal
 import dev.ktrics.ir.Lang
+import dev.ktrics.ir.StaleDismissal
 import dev.ktrics.ir.UnusedEntry
 import dev.ktrics.metric.MetricResult
 import dev.ktrics.metric.Severity
@@ -33,6 +34,10 @@ data class AnalysisReport(
     val unused: List<UnusedEntry> = emptyList(),
     /** Reference-only call-graph fan-in/fan-out for the scopes that fired (the `signals:` block). */
     val signals: List<CallGraphSignal> = emptyList(),
+    /** Dismissal directives that matched no violation this run — remove them (the `staleDismissals:` block). */
+    val staleDismissals: List<StaleDismissal> = emptyList(),
+    /** Non-fatal diagnostics raised while assembling the run (e.g. a malformed dismissals sidecar). */
+    val warnings: List<String> = emptyList(),
 ) {
     companion object {
         const val AI_HEADER: String = "# ktrics ai-report v1"

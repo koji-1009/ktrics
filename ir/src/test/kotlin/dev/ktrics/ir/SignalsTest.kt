@@ -43,4 +43,25 @@ class SignalsTest {
         json.decodeFromString<UnusedEntry>(wire) shouldBe e
         listOf("file", "line", "kind", "name").forEach { wire shouldContain "\"$it\"" }
     }
+
+    @Test
+    fun `StaleDismissal round-trips with its selector fields as stable wire fields`() {
+        val s =
+            StaleDismissal(
+                source = "comment",
+                file = "pkg/Api.kt",
+                line = 3,
+                metric = "cyclomatic-complexity",
+                scope = null,
+                id = null,
+                reason = "was branchy before the refactor",
+            )
+        val wire = json.encodeToString(s)
+        json.decodeFromString<StaleDismissal>(wire) shouldBe s
+        listOf("source", "file", "line", "metric", "reason").forEach { wire shouldContain "\"$it\"" }
+        // `where()` renders the location every reporter shares; a location-less sidecar entry
+        // falls back to naming the channel.
+        s.where() shouldBe "pkg/Api.kt:3"
+        StaleDismissal(source = "sidecar", reason = "the violation this suppressed is gone").where() shouldBe "sidecar"
+    }
 }

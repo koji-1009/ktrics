@@ -126,12 +126,18 @@ class DaemonLauncherTest {
     fun `respawn destroys a live process recorded in the pid file`() {
         withProject { root ->
             // Spawn a harmless long-lived process, record its pid, and confirm respawn destroys it.
+            // The identity seam answers true — the production check would (correctly) refuse `sleep`.
             val victim = ProcessBuilder(sleepCommand()).start()
             try {
                 DaemonEndpoint.pidFile(root).writeText(victim.pid().toString())
                 var server: AutoCloseable? = null
                 try {
-                    val launcher = DaemonLauncher(root, startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) })
+                    val launcher =
+                        DaemonLauncher(
+                            root,
+                            startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) },
+                            isDaemonProcess = { true },
+                        )
                     launcher.respawn(timeoutMs = 2_000) shouldBe true
                     victim.waitFor(2, TimeUnit.SECONDS)
                     victim.isAlive shouldBe false
@@ -140,6 +146,29 @@ class DaemonLauncherTest {
                 }
             } finally {
                 victim.destroyForcibly()
+            }
+        }
+    }
+
+    @Test
+    fun `respawn refuses to signal a pid-file process that is not a ktrics daemon`() {
+        withProject { root ->
+            // A recycled pid can point at an unrelated process; the production identity check must
+            // leave it alone (kill -9 skips the daemon's shutdown hook, so stale pid files happen).
+            val bystander = ProcessBuilder(sleepCommand()).start()
+            try {
+                DaemonEndpoint.pidFile(root).writeText(bystander.pid().toString())
+                var server: AutoCloseable? = null
+                try {
+                    // Default seam = the real looksLikeDaemon check; `sleep` is recognizably NOT ktricsd.
+                    val launcher = DaemonLauncher(root, startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) })
+                    launcher.respawn(timeoutMs = 2_000) shouldBe true
+                    bystander.isAlive shouldBe true // untouched
+                } finally {
+                    server?.close()
+                }
+            } finally {
+                bystander.destroyForcibly()
             }
         }
     }
@@ -160,7 +189,12 @@ class DaemonLauncherTest {
                 Thread.sleep(500)
                 var server: AutoCloseable? = null
                 try {
-                    val launcher = DaemonLauncher(root, startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) })
+                    val launcher =
+                        DaemonLauncher(
+                            root,
+                            startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) },
+                            isDaemonProcess = { true },
+                        )
                     val elapsed = kotlin.system.measureTimeMillis { launcher.respawn(timeoutMs = 3_000) shouldBe true }
                     // The grace window must actually elapse before the forcible kill — proof the escalation
                     // path ran rather than the victim dying on the initial SIGTERM.
@@ -189,7 +223,12 @@ class DaemonLauncherTest {
                 Thread.sleep(500) // let the TERM trap install first (see the escalation test)
                 var server: AutoCloseable? = null
                 try {
-                    val launcher = DaemonLauncher(root, startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) })
+                    val launcher =
+                        DaemonLauncher(
+                            root,
+                            startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) },
+                            isDaemonProcess = { true },
+                        )
                     // Pre-set the interrupt flag so the first awaitExit get() throws InterruptedException at once;
                     // the throw clears the flag, so the post-escalation wait and spawn complete normally.
                     Thread.currentThread().interrupt()

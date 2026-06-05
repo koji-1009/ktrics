@@ -112,6 +112,72 @@ class KotlinClassifierTest {
     }
 
     @Test
+    fun `operator forms emit their convention names through referencedNames`() {
+        // `a + b` / `a[0]` / `1 in a` / `val (first) = a` / `a()` carry no name reference to the
+        // operator functions they invoke; the convention names keep user-defined operators alive in
+        // name-based reachability (the dartrics 0.7.3 false-positive class).
+        val operators = fixture.kotlinUnit("Operators.kt")
+        val names = classifier.referencedNames(operators.function("useThem").node)
+        names shouldContain "plus"
+        names shouldContain "get"
+        names shouldContain "contains"
+        names shouldContain "component1"
+        names shouldContain "invoke"
+    }
+
+    @Test
+    fun `for-in and delegation emit their convention names`() {
+        val operators = fixture.kotlinUnit("Operators.kt")
+        val names = classifier.referencedNames(operators.function("loopAndDelegate").node)
+        names shouldContain "iterator"
+        names shouldContain "hasNext"
+        names shouldContain "next"
+        names shouldContain "getValue"
+    }
+
+    @Test
+    fun `prefix and postfix operator forms emit their convention names`() {
+        val operators = fixture.kotlinUnit("Operators.kt")
+        val names = classifier.referencedNames(operators.function("useUnary").node)
+        names shouldContain "unaryMinus" // `-a`
+        names shouldContain "inc" // `v++`
+        names.contains("not") shouldBe false // `s!!` carries no convention
+    }
+
+    @Test
+    fun `else-if branches charge flat and plain else rides the owning if`() {
+        val body = shapes.function("elseIfChain").bodyNode!!
+        // Two `else if` links are flat increments; the final plain else charges +1 through its if.
+        classifier.descendants(body).count { classifier.isFlatIncrement(it) } shouldBe 2
+        classifier.descendants(body).sumOf { classifier.elseIncrement(it) } shouldBe 1
+    }
+
+    @Test
+    fun `lambdas are nesting-only boundaries and argument closures are recognised`() {
+        val body = shapes.function("lambdaNesting").bodyNode!!
+        classifier.descendants(body).count { classifier.isNestingOnlyBoundary(it) } shouldBe 1
+        classifier.descendants(body).count { classifier.isArgumentClosure(it) } shouldBe 1
+    }
+
+    @Test
+    fun `a labeled continue is a flat increment, a bare one is not`() {
+        val body = shapes.function("labeledJump").bodyNode!!
+        classifier.descendants(body).count { classifier.isFlatIncrement(it) } shouldBe 1
+    }
+
+    @Test
+    fun `the primitive-type table and type-name normaliser cover the documented shapes`() {
+        // The CBO primitive exclusion: simple names, nullable/generic forms, and resolved kotlin.X
+        // keys are all primitives; a user type with a dotted primitive-looking name is NOT.
+        KOTLIN_PRIMITIVE_TYPE_NAMES shouldContain "Int"
+        isKotlinPrimitiveType("Int") shouldBe true
+        isKotlinPrimitiveType("Int?") shouldBe true
+        isKotlinPrimitiveType("kotlin.Int") shouldBe true
+        isKotlinPrimitiveType("com.foo.Int") shouldBe false
+        simpleTypeName("List<Dep1>?") shouldBe "List"
+    }
+
+    @Test
     fun `tokens classify operators and operands`() {
         val body = shapes.function("straight").bodyNode!!
         val tokens = classifier.tokens(body)

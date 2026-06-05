@@ -63,4 +63,36 @@ class JShapes {
         }
         return s;
     }
+
+    String elseIfChain(int x) {
+        if (x == 0) {
+            return "zero";
+        } else if (x == 1) {
+            return "one";
+        } else if (x == 2) {
+            return "two";
+        } else {
+            return "many";
+        }
+    }
+
+    int labeledJump(int n) {
+        outer:
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                continue outer;
+            }
+        }
+        return n;
+    }
+
+    int lambdaNesting(java.util.List<Integer> items) {
+        int[] s = {0};
+        items.forEach(v -> {
+            if (v > 0) {
+                s[0] += v;
+            }
+        });
+        return s[0];
+    }
 }

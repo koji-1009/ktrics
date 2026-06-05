@@ -69,7 +69,7 @@ ktrics manual
 | `analyze <path>` | Every enabled metric + the public-API unused detector. Emits `signals:` (call-graph fan-in / fan-out per declaration) as reference information alongside the thresholded metrics. |
 | `unused [--apply]` | Public-API reachability only (fast path); `--apply` deletes top-level orphans (safety-gated). |
 | `inspect <symbol>` | Walk the resolved call graph around a named declaration; `--depth` / `--direction up\|down\|both` configure the walk. |
-| `regression --before <ref> --after <ref>` | Compare metrics between two git states; classify each delta by polarity as improved / regressed / unchanged / added / removed. |
+| `regression --before <ref> --after <ref>` | Compare metrics between two git states; classify each delta by polarity as improved / regressed / unchanged / neutral-delta / added / removed. |
 | `report <input.json>` | Re-emit a previously saved JSON report in another format. |
 | `rules` | Catalogue every metric, one line each with defaults and applicability. |
 | `explain <metric-id>` | Full rationale, refactor hints, and references for one metric. |

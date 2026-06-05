@@ -146,6 +146,7 @@ internal fun FakeClassifier.type(
     kind: TypeKind = TypeKind.CLASS,
     visibility: Visibility = Visibility.PUBLIC,
     lang: Lang = Lang.KOTLIN,
+    annotations: List<String> = emptyList(),
 ): TypeDecl {
     val n = register(emptyList(), emptyList(), Resolution.NAME_BASED)
     return TypeDecl(
@@ -153,7 +154,7 @@ internal fun FakeClassifier.type(
         Modifiers(
             visibility,
         ),
-        emptyList(), SPAN, n, lang,
+        annotations, SPAN, n, lang,
     )
 }
 

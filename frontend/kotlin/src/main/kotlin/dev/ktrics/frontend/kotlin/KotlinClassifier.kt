@@ -22,14 +22,15 @@ import org.jetbrains.kotlin.psi.KtDoWhileExpression
 import org.jetbrains.kotlin.psi.KtForExpression
 import org.jetbrains.kotlin.psi.KtFunction
 import org.jetbrains.kotlin.psi.KtIfExpression
+import org.jetbrains.kotlin.psi.KtLambdaExpression
 import org.jetbrains.kotlin.psi.KtLiteralStringTemplateEntry
 import org.jetbrains.kotlin.psi.KtModifierListOwner
 import org.jetbrains.kotlin.psi.KtNameReferenceExpression
-import org.jetbrains.kotlin.psi.KtParameter
+import org.jetbrains.kotlin.psi.KtNamedFunction
 import org.jetbrains.kotlin.psi.KtSimpleNameExpression
 import org.jetbrains.kotlin.psi.KtStringTemplateExpression
 import org.jetbrains.kotlin.psi.KtTypeReference
-import org.jetbrains.kotlin.psi.KtWhenEntry
+import org.jetbrains.kotlin.psi.KtValueArgument
 import org.jetbrains.kotlin.psi.KtWhenExpression
 import org.jetbrains.kotlin.psi.KtWhileExpression
 import org.jetbrains.kotlin.psi.psiUtil.collectDescendantsOfType
@@ -64,8 +65,26 @@ open class KotlinClassifier : NodeClassifier {
             is KtIfExpression, is KtForExpression, is KtWhileExpression, is KtDoWhileExpression,
             is KtWhenExpression, is KtCatchClause,
             -> true
-            else -> isScopeFunctionInvocation(n) // nesting penalty inside scope-fn / lambda bodies
+            else -> false
         }
+
+    // Lambdas and local functions raise the nesting level WITHOUT a B1 increment (SonarSource:
+    // "nested methods and method-like structures"). This covers scope-function lambdas too — the
+    // call expression itself is no longer a boundary, so a `let { }` nests exactly once.
+    override fun isNestingOnlyBoundary(n: PsiElement): Boolean = n is KtLambdaExpression || (n is KtNamedFunction && n.isLocal)
+
+    override fun isFlatIncrement(n: PsiElement): Boolean = isElseIfBranch(n) || isLabeledJump(n)
+
+    override fun elseIncrement(n: PsiElement): Int {
+        if (n !is KtIfExpression) return 0
+        val elseBranch = n.`else` ?: return 0
+        return if (elseBranch is KtIfExpression) 0 else 1 // `else if` charges via isFlatIncrement
+    }
+
+    override fun isArgumentClosure(n: PsiElement): Boolean =
+        // Trailing lambdas sit in a KtLambdaArgument (a KtValueArgument subtype); parenthesized
+        // closures in a plain KtValueArgument — both are "a closure handed to a call".
+        n is KtLambdaExpression && n.parent is KtValueArgument
 
     override fun isLogicalSequence(n: PsiElement): Boolean {
         if (n !is KtBinaryExpression) return false
@@ -81,6 +100,9 @@ open class KotlinClassifier : NodeClassifier {
             n is KtDoWhileExpression || n is KtWhenExpression ||
             (n is KtBinaryExpression && (n.operationToken == KtTokens.ANDAND || n.operationToken == KtTokens.OROR))
 
+    // Deliberate asymmetry with isDecisionPoint: the `else` entry IS an execution path (npath counts
+    // paths), while McCabe counts decisions (else is the absence of one) — so npath includes it and
+    // cyclomatic excludes it. Mirrors the Java classifier's `default` label handling.
     override fun npathMultiplier(n: PsiElement): Int =
         when (n) {
             is KtWhenExpression -> n.entries.size.coerceAtLeast(2)
@@ -96,17 +118,6 @@ open class KotlinClassifier : NodeClassifier {
     override fun parameters(fn: PsiElement): List<Param> {
         val function = fn as? KtFunction ?: return emptyList()
         return function.valueParameters.map { it.toParam() }
-    }
-
-    private fun KtParameter.toParam(): Param {
-        val typeText = typeReference?.text ?: "Any"
-        return Param(
-            name = name ?: "_",
-            typeName = typeText,
-            hasDefault = hasDefaultValue(),
-            isVararg = isVarArg,
-            isBoolean = typeText.removeSuffix("?").substringAfterLast('.') == "Boolean",
-        )
     }
 
     override fun annotations(decl: PsiElement): List<String> {
@@ -171,7 +182,7 @@ open class KotlinClassifier : NodeClassifier {
                 .filterNot { isKotlinPrimitiveType(it) }
                 .map { simpleTypeName(it) }
                 .filter { it.isNotBlank() }
-        return calls + types
+        return calls + types + operatorConventionNames(scope)
     }
 
     override fun supertypes(type: PsiElement): List<TypeRef> {
@@ -192,10 +203,32 @@ open class KotlinClassifier : NodeClassifier {
 
     // Same walk as fieldAccesses today, but a DISTINCT contract: fieldAccesses may later narrow to
     // resolved instance-field accesses (LCOM4) while reachability must keep seeing every name read.
+    // Operator-convention names ride along: `a[i]`/`a + b`/`for (x in y)`/`val (a, b)`/`by` carry NO
+    // name reference to the operator function they invoke, so a user-defined `operator fun get`/
+    // `plus`/`iterator`/`componentN`/`getValue` reached only through the operator form would be
+    // reported unused (and `--apply` could delete it). This channel only ever ADDS reachability and
+    // never feeds the resolution stamp — the safe direction. One walk collects both channels: this
+    // runs once per declaration in the unused sweep, so a second full traversal would be hot.
     override fun referencedNames(scope: PsiElement): Set<String> =
-        scope.collectDescendantsOfType<KtNameReferenceExpression>()
-            .map { it.getReferencedName() }
-            .toSet()
+        buildSet {
+            for (n in sequenceOf(scope) + descendants(scope)) {
+                if (n is KtNameReferenceExpression) add(n.getReferencedName())
+                addConventionNamesOf(n)
+            }
+        }
+
+    /**
+     * The convention-function names invoked by every operator form in [scope] (Kotlin language spec
+     * operator conventions). Name-based by design: where the form is ambiguous without resolution
+     * (`a[i]` read vs write, `a += b` as `plusAssign` vs `plus`), BOTH candidates are emitted —
+     * over-connecting errs toward keeping live code.
+     */
+    protected fun operatorConventionNames(scope: PsiElement): List<String> =
+        buildList {
+            for (n in (sequenceOf(scope) + descendants(scope))) {
+                addConventionNamesOf(n)
+            }
+        }
 
     override fun tokens(scope: PsiElement): List<Token> =
         leaves(scope).mapNotNull { leaf ->
@@ -218,13 +251,6 @@ open class KotlinClassifier : NodeClassifier {
     override fun children(n: PsiElement): List<PsiElement> = generateSequence(n.firstChild) { it.nextSibling }.toList()
 
     override fun text(n: PsiElement): String = n.text
-
-    // A `when` entry is a decision point unless it is the `else` branch. Use the structural `isElse` flag,
-    // not a text prefix — `startsWith("else")` wrongly excluded entries whose condition began with an
-    // identifier like `elseStatus`, undercounting cyclomatic complexity.
-    private fun isWhenEntryWithCondition(n: PsiElement): Boolean = n is KtWhenEntry && !n.isElse
-
-    private fun isIdentifier(leaf: PsiElement): Boolean = (leaf.node?.elementType == KtTokens.IDENTIFIER)
 
     private fun leaves(root: PsiElement): Sequence<PsiElement> =
         sequence {

@@ -55,9 +55,11 @@ class CyclomaticComplexity : FunctionMetric {
 
 /**
  * SonarSource 2018 cognitive complexity (industry, not peer-reviewed). B1 increment per control
- * structure + B2 nesting penalty + B3 logical-operator sequences. Nesting penalty applies inside
- * lambdas and Kotlin scope functions; `?.` alone adds nothing (handled in the Kotlin classifier).
- * Deviations from the spec (else/label handling) are documented in doc/calibration.md.
+ * structure + B2 nesting penalty + B3 logical-operator sequences. Per the spec: `else if`/`else`
+ * and labeled jumps charge flat (+1, no nesting); lambdas and local functions raise the nesting
+ * level without an increment of their own; `?.` alone adds nothing (handled in the Kotlin
+ * classifier). On test files (with `test:` on) closures passed as call arguments are skipped
+ * entirely — the test-DSL discount (see doc/calibration.md).
  */
 class CognitiveComplexity : FunctionMetric {
     override val def =
@@ -86,30 +88,57 @@ class CognitiveComplexity : FunctionMetric {
     ): Double {
         val c = ctx.classifier
         val root = fn.bodyNode ?: fn.node
-        return walk(root, depth = 0, c).toDouble()
+        return walk(root, depth = 0, c, skipArgumentClosures = ctx.isTestFile).toDouble()
     }
 
     private fun walk(
         node: PsiElement,
         depth: Int,
         c: NodeClassifier,
+        skipArgumentClosures: Boolean,
     ): Int {
-        // Score `node` itself before recursing: an expression-body control structure (Kotlin `= if`/`when`)
-        // IS the root, so a children-only walk would never charge the top-level structure its B1 increment.
-        // The function's own top-level block is not a nesting boundary, so block bodies are unaffected.
-        val nests = c.isNestingBoundary(node)
-        var total =
-            when {
-                nests -> 1 + depth // B1 increment + B2 nesting penalty
-                c.isLogicalSequence(node) -> 1 // B3: one per run of like operators
-                else -> 0
-            }
-        val childDepth = if (nests) depth + 1 else depth
+        // Test-DSL discount: a closure handed to a call (`test("x") { … }`) is data handed to the
+        // DSL, not control flow of the enclosing function — skip its contents AND its nesting.
+        if (skipArgumentClosures && c.isArgumentClosure(node)) return 0
+        var total = increment(node, depth, c)
+        val childDepth = if (raisesChildNesting(node, c)) depth + 1 else depth
         for (child in c.children(node)) {
-            total += walk(child, childDepth, c)
+            total += walk(child, childDepth, c, skipArgumentClosures)
         }
         return total
     }
+
+    /**
+     * The increment one node contributes, scored before recursing: an expression-body control
+     * structure (Kotlin `= if`/`when`) IS the root, so a children-only walk would never charge the
+     * top-level structure its B1. The flat check precedes the nesting one — an `else if` is still an
+     * if node, but charges +1 with no nesting penalty. A plain `else` charges +1 flat through its
+     * owning if (the else keyword has no node of its own).
+     */
+    private fun increment(
+        node: PsiElement,
+        depth: Int,
+        c: NodeClassifier,
+    ): Int {
+        val structural =
+            when {
+                c.isFlatIncrement(node) -> 1 // B1 only: `else if` link / labeled jump
+                c.isNestingBoundary(node) -> 1 + depth // B1 increment + B2 nesting penalty
+                c.isLogicalSequence(node) -> 1 // B3: one per run of like operators
+                else -> 0
+            }
+        return structural + c.elseIncrement(node)
+    }
+
+    /**
+     * Whether [node]'s children sit one nesting level deeper: control structures nest, and so do
+     * lambdas/local functions (without an increment of their own) — while an `else if` keeps its
+     * inherited depth (it was already bumped as a child of the chain head; the chain shares one level).
+     */
+    private fun raisesChildNesting(
+        node: PsiElement,
+        c: NodeClassifier,
+    ): Boolean = (!c.isFlatIncrement(node) && c.isNestingBoundary(node)) || c.isNestingOnlyBoundary(node)
 }
 
 /**
@@ -202,7 +231,12 @@ class MaximumNestingLevel : FunctionMetric {
     ): Int {
         // Count `node` itself as a level, not only its children: an expression-body control structure IS the
         // root. The function's own top-level block is not a nesting boundary, so block bodies still start at 0.
-        val here = if (c.isNestingBoundary(node)) depth + 1 else depth
+        // An `else if` link (isFlatIncrement) shares the chain head's level — a flat 4-branch chain is depth 1,
+        // not 3. Lambdas deliberately do NOT count here (unlike cognitive's B2): this lens measures
+        // CONTROL-STRUCTURE depth, and counting builder-DSL lambdas (`buildJsonArray { forEach { … } }`)
+        // would fire it on flat, idiomatic code — confirmed by dogfooding (doc/calibration.md).
+        val bumps = c.isNestingBoundary(node) && !c.isFlatIncrement(node)
+        val here = if (bumps) depth + 1 else depth
         var max = here
         for (child in c.children(node)) {
             max = maxOf(max, maxDepth(child, here, c))

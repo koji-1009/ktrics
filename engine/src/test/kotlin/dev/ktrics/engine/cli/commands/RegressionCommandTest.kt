@@ -116,11 +116,52 @@ class RegressionCommandTest {
     }
 
     @Test
-    fun `the console report flags a suspected cosmetic refactor`() {
+    fun `the console report flags a detected cosmetic split with the narrow-heuristic framing`() {
         val (code, sink) = run(repo, "--before", firstSha, "--after", cosmeticSha)
         code shouldBe Exit.OK
-        // Four tiny helpers added, lines way up, complexity unchanged → the cosmetic warning line renders.
-        sink.out.toString() shouldContain "cosmetic-refactor suspected"
+        // Four tiny helpers added, lines way up, complexity unchanged → the cosmetic line renders,
+        // framed as a narrow signal (not a refactor-quality verdict) per the dartrics 0.7.2 rename.
+        val out = sink.out.toString()
+        out shouldContain "cosmetic-split signature detected"
+        out shouldContain "narrow heuristic, not a global verdict"
+    }
+
+    @Test
+    fun `the ai report names cosmeticSplitDetected with the narrow-heuristic comment`() {
+        val (code, sink) = run(repo, "--before", firstSha, "--after", cosmeticSha, "--reporter", "ai")
+        code shouldBe Exit.OK
+        val out = sink.out.toString()
+        out shouldContain "cosmeticSplitDetected: true"
+        out shouldContain "# narrow heuristic, not a global verdict"
+    }
+
+    @Test
+    fun `a project rooted in a repo subdirectory diffs the matching subtree at each ref`() {
+        // A worktree checks out the WHOLE repo; the historical side must scope to the project's
+        // subdirectory or paths never line up and every scope reads as added+removed.
+        val sub = File(repo, "modA").apply { mkdirs() }
+        val src = File(sub, "Mod.kt")
+        src.writeText("package m\n\nfun g(x: Int): Int = x\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "sub-simple")
+        val subBefore = git(repo, "rev-parse", "HEAD")
+        src.writeText("package m\n\nfun g(x: Int): Int {\n    if (x > 0) return 1\n    if (x < 0) return 2\n    return 3\n}\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "sub-branchy")
+        val subAfter = git(repo, "rev-parse", "HEAD")
+        try {
+            val (code, sink) = run(sub, "--before", subBefore, "--after", subAfter, "--reporter", "ai")
+            code shouldBe Exit.OK
+            val out = sink.out.toString()
+            // The SAME scope is matched across refs (regressed), with subtree-relative paths —
+            // whole-repo analysis would key f under Sample.kt and report m.g as added+removed.
+            out shouldContain "change: regressed"
+            out shouldContain "scope: m.g"
+            out shouldContain "file: Mod.kt"
+        } finally {
+            git(repo, "rm", "-q", "-r", "modA")
+            git(repo, "commit", "-q", "-m", "drop-sub")
+        }
     }
 
     @Test

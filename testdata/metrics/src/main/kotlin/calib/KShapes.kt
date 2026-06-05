@@ -65,4 +65,66 @@ class KShapes {
         }
         return s
     }
+
+    /** Flat if/else-if/else-if/else chain → cognitive 4 (head 1 + two flat else-if + flat else), nesting 1. */
+    fun elseIfChain(x: Int): String {
+        if (x == 0) {
+            return "zero"
+        } else if (x == 1) {
+            return "one"
+        } else if (x == 2) {
+            return "two"
+        } else {
+            return "many"
+        }
+    }
+
+    /** Labeled continue in nested loops → cognitive: for(1) + inner for(2) + labeled jump(1) = 4. */
+    fun labeledJump(n: Int): Int {
+        outer@ for (i in 0 until n) {
+            for (j in 0 until n) {
+                continue@outer
+            }
+        }
+        return n
+    }
+
+    /** A branch inside a HOF lambda: the lambda nests WITHOUT an increment → if costs 1+1 → cognitive 2. */
+    fun lambdaNesting(items: List<Int>): Int {
+        var s = 0
+        items.forEach { v ->
+            if (v > 0) {
+                s += v
+            }
+        }
+        return s
+    }
+
+    /** A scope-fn lambda nests once with no increment of its own → the inner if costs 1+1 → cognitive 2. */
+    fun scopeFnCost(s: String?): Int = s?.let { if (it.isEmpty()) 0 else it.length } ?: 0
+
+    /** Closures handed to a call: the test-DSL discount skips them entirely on test files. */
+    fun dslRegistration() {
+        register("a") {
+            if (flag()) {
+                emit()
+            }
+        }
+        register("b") {
+            if (flag()) {
+                emit()
+            }
+        }
+    }
+
+    private fun register(
+        name: String,
+        body: () -> Unit,
+    ) {
+        if (name.isNotEmpty()) body()
+    }
+
+    private fun flag(): Boolean = true
+
+    private fun emit() {}
 }

@@ -42,28 +42,31 @@ class AnalysisEngine(
 ) {
     private val kotlinClassifier: NodeClassifier = KotlinFrontend(projectRoot, resolved).classifier
     private val javaClassifier: NodeClassifier = JavaFrontend(projectRoot, resolved).classifier
-    private val excludeMatchers = excludeGlobs.flatMap { glob -> matchersFor(glob) }
+    private val excludeFilter = ExcludeFilter(excludeGlobs)
 
     /**
-     * Runs serialized under the [WarmIndexCache] monitor: the embedded Analysis API session is shared
-     * mutable state and is NOT safe for concurrent `analyze` calls, and holding the monitor across the
-     * whole run also prevents a concurrent request from rebuilding the cache and disposing the session
-     * this run is still reading (use-after-dispose). The daemon's loop is sequential, so the cost is nil;
-     * this can be refined to per-key locking later if true concurrency is ever wanted.
+     * Runs serialized under the [WarmIndexCache] monitor (via [WarmIndexCache.withWarm]): the embedded
+     * Analysis API session is shared mutable state and is NOT safe for concurrent `analyze` calls, and
+     * holding the monitor across the whole run also prevents a concurrent request from rebuilding the
+     * cache and disposing the session this run is still reading (use-after-dispose). The daemon's loop
+     * is sequential, so the cost is nil; this can be refined to per-key locking later if needed.
      */
     fun analyze(graph: ModuleGraph): AnalysisReport =
-        synchronized(WarmIndexCache) {
-            val warm = WarmIndexCache.get(projectRoot, graph, configHash, resolved)
+        WarmIndexCache.withWarm(projectRoot, graph, configHash, resolved) { warm ->
             val classifierFor: (Lang) -> NodeClassifier = { lang ->
                 if (lang == Lang.KOTLIN) kotlinClassifier else javaClassifier
             }
             // Excluded files still feed the index (so they remain resolution targets), but are not measured.
-            val measuredUnits = warm.units.filterNot { isExcluded(it.path) }
+            val measuredUnits = warm.units.filterNot { excludeFilter.excludes(it.path) }
             val output = MetricRunner(warm.index, settings, skips, classifierFor).run(measuredUnits)
 
             // Apply dismissals: drop accepted ones; keep rejected ones live and flagged.
-            val applier = DismissalApplier(projectRoot, Sidecar.load(projectRoot), strictDismiss)
+            val sidecar = Sidecar.load(projectRoot)
+            val applier = DismissalApplier(projectRoot, sidecar, strictDismiss)
             val (live, _) = applier.partition(output.violations)
+            // Stale detection runs on the PRE-dismissal violations over the measured files, BEFORE any
+            // --since shaping — a directive whose violation was filtered out must not read as stale.
+            val stale = applier.staleDismissals(output.violations, measuredUnits.map { it.path })
             // Stamp complexityJustified from coverage before sorting.
             val annotated = CoverageAnnotator.annotate(live, coverage)
             val violations = Actionability.sort(annotated)
@@ -78,31 +81,10 @@ class AnalysisEngine(
                 violations = violations,
                 files = files,
                 measurements = if (includeMeasurements) output.results else emptyList(),
+                staleDismissals = stale,
+                warnings = sidecar.warnings,
             )
         }
-
-    private fun isExcluded(relativePath: String): Boolean {
-        if (excludeMatchers.isEmpty()) return false
-        val path = runCatching { java.nio.file.Paths.get(relativePath) }.getOrNull() ?: return false
-        return excludeMatchers.any { it.matches(path) }
-    }
-
-    /**
-     * Path matchers for one configured glob. A leading globstar segment in a Java glob requires a
-     * parent path component, so a pattern intended to match `build` anywhere does NOT match a
-     * top-level `build/classes/Foo.kt`; we also register the form with that leading globstar segment
-     * stripped so both top-level and nested paths match.
-     */
-    private fun matchersFor(glob: String): List<java.nio.file.PathMatcher> {
-        val fs = java.nio.file.FileSystems.getDefault()
-        val leadingGlobstar = "**/"
-        val variants =
-            buildList {
-                add(glob)
-                if (glob.startsWith(leadingGlobstar)) add(glob.removePrefix(leadingGlobstar))
-            }
-        return variants.mapNotNull { runCatching { fs.getPathMatcher("glob:$it") }.getOrNull() }
-    }
 
     companion object {
         /**

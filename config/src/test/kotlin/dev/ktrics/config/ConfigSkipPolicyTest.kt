@@ -84,6 +84,10 @@ class ConfigSkipPolicyTest {
         withTest.skipFunction(cyclomatic, fn, type, testUnit) shouldBe false
         // Test mode off → nothing skipped on the same file.
         noTest.skipFunction(sloc, fn, type, testUnit) shouldBe false
+        // The test-DSL cognitive discount rides the same gate: `test:` on AND a conventional test file.
+        withTest.testDslDiscount(testUnit) shouldBe true
+        withTest.testDslDiscount(plainUnit) shouldBe false
+        noTest.testDslDiscount(testUnit) shouldBe false
     }
 
     @Test

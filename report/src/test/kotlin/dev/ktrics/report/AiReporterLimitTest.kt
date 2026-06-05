@@ -106,4 +106,54 @@ class AiReporterLimitTest {
     fun `an empty violations set renders the explicit empty marker`() {
         AiReporter().render(report()) shouldContain "violations: []"
     }
+
+    // --- the counts block: section totals in one place (all sections share the `- file:` shape) ---
+
+    @Test
+    fun `counts reports the KEPT size per section so total equals counts plus drops`() {
+        val violations = (1..5).map { violation("m$it", value = it * 10.0) }
+        val unused = (1..3).map { UnusedEntry("src/Foo.kt", it, "function", "dead$it") }
+        val text = AiReporter(limit = 2).render(report(violations = violations, unused = unused))
+        text shouldContain "counts:"
+        text shouldContain "  violations: 2" // kept (counts) — 3 more under truncated
+        text shouldContain "  unused: 2"
+        text shouldContain "  staleDismissals: 0"
+        text shouldContain "  signals: 0"
+        text shouldContain "truncated:"
+        text shouldContain "  violations: 3"
+        text shouldContain "  unused: 1"
+    }
+
+    @Test
+    fun `stale dismissals render their own block and ride counts and truncated`() {
+        val stale =
+            (1..3).map {
+                dev.ktrics.ir.StaleDismissal(source = "comment", file = "src/Foo.kt", line = it, metric = "m$it", reason = "old reason $it")
+            }
+        val base = report()
+        val text = AiReporter(limit = 2).render(base.copy(staleDismissals = stale))
+        text shouldContain "  staleDismissals: 2" // kept
+        text shouldContain "staleDismissals:"
+        text shouldContain "- source: comment"
+        text shouldContain "    reason: \"old reason 1\""
+        text shouldContain "truncated:"
+        text shouldContain "  staleDismissals: 1"
+    }
+
+    @Test
+    fun `unused entries carry a snippet when sources are available`() {
+        val sources =
+            object : SourceProvider {
+                override fun lines(
+                    file: String,
+                    from: Int,
+                    to: Int,
+                ): Pair<Int, List<String>> = from to (from..to).map { "line $it" }
+            }
+        val text = AiReporter(sources = sources).render(report(unused = listOf(UnusedEntry("src/Foo.kt", 7, "function", "dead"))))
+        // The dartrics shape: the agent reads the surrounding code without a second tool call.
+        text shouldContain "    snippet: |"
+        text shouldContain "> " // the marker line for the declaration itself
+        text shouldContain "line 7"
+    }
 }

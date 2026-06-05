@@ -125,12 +125,62 @@ class FunctionMetricCalibrationTest {
         measure(CognitiveComplexity(), java, "nestedTwo") shouldBe 3.0
     }
 
+    @Test
+    fun `an else-if chain charges flat per branch, not by nesting structure`() {
+        // SonarSource per-branch rule: head if (+1) + two `else if` (+1 each, flat) + plain else (+1)
+        // = 4 — NOT the 1+2+3 the raw child-nesting walk would produce. Identical in both languages.
+        measure(CognitiveComplexity(), kotlin, "elseIfChain") shouldBe 4.0
+        measure(CognitiveComplexity(), java, "elseIfChain") shouldBe 4.0
+    }
+
+    @Test
+    fun `a labeled jump charges one flat increment`() {
+        // outer for (+1) + inner for (+1+1) + labeled continue (+1, flat) = 4, in both languages.
+        measure(CognitiveComplexity(), kotlin, "labeledJump") shouldBe 4.0
+        measure(CognitiveComplexity(), java, "labeledJump") shouldBe 4.0
+    }
+
+    @Test
+    fun `a lambda raises nesting without an increment of its own`() {
+        // The forEach closure nests (no B1); the if inside costs 1+1 → 2, in both languages.
+        measure(CognitiveComplexity(), kotlin, "lambdaNesting") shouldBe 2.0
+        measure(CognitiveComplexity(), java, "lambdaNesting") shouldBe 2.0
+    }
+
+    @Test
+    fun `a scope-function lambda nests once and charges nothing itself`() {
+        // `s?.let { if … else … }`: the let lambda is nesting-only, the if costs 1+1, its else +1
+        // flat (the spec charges every `else` keyword), elvis adds 0 → 3.
+        measure(CognitiveComplexity(), kotlin, "scopeFnCost") shouldBe 3.0
+    }
+
+    @Test
+    fun `the test-DSL discount skips argument closures entirely on test files`() {
+        // Two registration closures each holding an if: production scoring gives 2+2 = 4; on a test
+        // file (isTestFile) the closures are data handed to the DSL → 0. The named helpers keep
+        // their own scores either way.
+        val fn = kotlin.function("dslRegistration")
+        val classifier = fixture.classifier(kotlin.lang)
+        CognitiveComplexity().measure(fn, MeasureContext(classifier, kotlin)) shouldBe 4.0
+        CognitiveComplexity().measure(fn, MeasureContext(classifier, kotlin, isTestFile = true)) shouldBe 0.0
+    }
+
     // --- Maximum nesting level ---
 
     @Test
     fun `maximum nesting level counts two for two nested ifs in both languages`() {
         measure(MaximumNestingLevel(), kotlin, "nestedTwo") shouldBe 2.0
         measure(MaximumNestingLevel(), java, "nestedTwo") shouldBe 2.0
+    }
+
+    @Test
+    fun `an else-if chain is one nesting level and lambdas do not deepen it`() {
+        // The flat chain never deepens (1). Lambdas count for cognitive's B2 but NOT here: this lens
+        // is control-structure depth, and builder-DSL lambdas would otherwise fire it on flat code.
+        measure(MaximumNestingLevel(), kotlin, "elseIfChain") shouldBe 1.0
+        measure(MaximumNestingLevel(), java, "elseIfChain") shouldBe 1.0
+        measure(MaximumNestingLevel(), kotlin, "lambdaNesting") shouldBe 1.0
+        measure(MaximumNestingLevel(), java, "lambdaNesting") shouldBe 1.0
     }
 
     // --- Number of parameters: Kotlin discounts defaults ---

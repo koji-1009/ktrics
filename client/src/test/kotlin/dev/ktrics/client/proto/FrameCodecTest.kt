@@ -38,7 +38,6 @@ class FrameCodecTest {
                 argv = listOf("analyze", "--reporter", "ai", "src/"),
                 cwd = "/work/project",
                 env = mapOf("KTRICS_RUNTIME_DIR" to "/run"),
-                terminalWidth = 120,
             )
         roundTripRequest(request) shouldBe request
     }

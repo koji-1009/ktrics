@@ -19,6 +19,11 @@ class DaemonLauncher(
      * fully assembled before this is called.
      */
     private val startProcess: (ProcessBuilder) -> Unit = { it.start() },
+    /**
+     * Identifies a pid-file process as a ktrics daemon before it is signalled (DI seam: test victims
+     * are `sleep`/`sh`, which the production check would — correctly — refuse to kill).
+     */
+    private val isDaemonProcess: (ProcessHandle) -> Boolean = ::looksLikeDaemon,
 ) {
     /** Ensures a daemon is listening; spawns one and waits up to [timeoutMs] for the socket. */
     fun ensureRunning(timeoutMs: Long = DEFAULT_SPAWN_TIMEOUT_MS): Boolean {
@@ -55,6 +60,9 @@ class DaemonLauncher(
         val pidFile = DaemonEndpoint.pidFile(projectRoot)
         val pid = pidFile.takeIf { it.exists() }?.readText()?.trim()?.toLongOrNull() ?: return
         val handle = ProcessHandle.of(pid).orElse(null) ?: return
+        // A pid file can outlive its daemon (kill -9 skips the shutdown hook) and the OS can recycle
+        // the pid — never signal a process that isn't recognizably a ktrics daemon.
+        if (!isDaemonProcess(handle)) return
         handle.destroy()
         if (!awaitExit(handle, STOP_GRACE_MS)) {
             handle.destroyForcibly()
@@ -121,5 +129,17 @@ class DaemonLauncher(
 
         /** Bounded wait after SIGKILL; never hangs respawn even if the process is unkillable. */
         private const val STOP_FORCE_MS: Long = 500
+
+        /**
+         * True when [handle]'s command line is recognizably a ktrics daemon (the `ktricsd` launcher
+         * or a JVM running it). When the OS exposes NO command info at all, err toward true — the
+         * pid file is our own artifact and the common case is a live daemon we just talked to.
+         */
+        internal fun looksLikeDaemon(handle: ProcessHandle): Boolean {
+            val info = handle.info()
+            val command = info.command().orElse(null)
+            val line = info.commandLine().orElse(command) ?: return true
+            return line.contains("ktricsd", ignoreCase = true) || line.contains("ktrics.daemon", ignoreCase = true)
+        }
     }
 }

@@ -53,6 +53,8 @@ class ConfigSkipPolicy(private val config: KtricsConfig) : SkipPolicy {
         unit: SourceUnit,
     ): Boolean = config.test && isTestFile(unit) && def.id in TEST_SKIPPED_SIZE_SHAPE
 
+    override fun testDslDiscount(unit: SourceUnit): Boolean = config.test && isTestFile(unit)
+
     private fun isBuilderConstructor(
         fn: FunctionDecl,
         owner: TypeDecl?,
@@ -63,12 +65,7 @@ class ConfigSkipPolicy(private val config: KtricsConfig) : SkipPolicy {
         return owner?.nested?.any { it.name == "Builder" } == true
     }
 
-    private fun isTestFile(unit: SourceUnit): Boolean {
-        val path = unit.path.replace('\\', '/')
-        val inTestDir = "/test/" in path || "/androidTest/" in path || path.startsWith("test/")
-        val name = path.substringAfterLast('/').substringBeforeLast('.')
-        return inTestDir && (name.endsWith("Test") || name.endsWith("Tests"))
-    }
+    private fun isTestFile(unit: SourceUnit): Boolean = dev.ktrics.metric.TestSources.isTestFile(unit.path)
 
     private companion object {
         val COMPOSE_SKIPPED = setOf("maximum-nesting-level", "method-length")

@@ -112,6 +112,35 @@ class TextReportersTest {
     }
 
     @Test
+    fun `markdown renders unused, signals, and stale-dismissal sections when present`() {
+        val base = report()
+        val full =
+            base.copy(
+                unused = listOf(dev.ktrics.ir.UnusedEntry("src/Foo.kt", 4, "function", "dead")),
+                signals = listOf(dev.ktrics.ir.CallGraphSignal("src/Foo.kt", "pkg.Foo.hot", "method", 9, 5, 8, 2, 3)),
+                staleDismissals =
+                    listOf(
+                        dev.ktrics.ir.StaleDismissal(source = "comment", file = "src/Foo.kt", line = 3, metric = "lcom4", reason = "old"),
+                    ),
+            )
+        val text = MarkdownReporter().render(full)
+        text shouldContain "## Unused (reference)"
+        text shouldContain "| function | `dead` | `src/Foo.kt:4` |"
+        text shouldContain "## Signals (reference)"
+        text shouldContain "| `pkg.Foo.hot` | method | 5 | 8 | 2 | 3 | `src/Foo.kt:9` |"
+        text shouldContain "## Stale Dismissals"
+        text shouldContain "| comment | `src/Foo.kt:3` | `lcom4` | old |"
+    }
+
+    @Test
+    fun `markdown omits the reference sections on a clean report`() {
+        val text = MarkdownReporter().render(report())
+        text.contains("## Unused") shouldBe false
+        text.contains("## Signals") shouldBe false
+        text.contains("## Stale Dismissals") shouldBe false
+    }
+
+    @Test
     fun `catalogue rules lists every metric with the count header`() {
         val rules = CatalogRenderer.rules()
         rules shouldContain "${BuiltinMetrics.all.size} metrics"

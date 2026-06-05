@@ -154,6 +154,29 @@ class SocketServerTest {
             .any { it is DaemonFrame.Exit } shouldBe true
     }
 
+    @Test
+    fun `a bind failure after the stale-socket probe exits cleanly instead of crashing`() {
+        // Two fresh daemons can both pass the probe before either binds — the loser's bind throws.
+        // Simulate the unbindable endpoint deterministically: a NON-EMPTY directory at the socket path
+        // passes the probe (no live listener), survives the stale delete (non-empty), and fails bind.
+        val root = createTempDirectory("bindrace").toFile()
+        val socket = DaemonEndpoint.socketPath(root)
+        try {
+            socket.mkdirs()
+            java.io.File(socket, "occupied").writeText("x")
+            val loser = SocketServer(root, idleTimeoutMs = 60_000)
+            val t = thread(isDaemon = true) { loser.serve() }
+            t.join(2_000)
+            t.isAlive shouldBe false // serve() returned via the bind catch — no stack trace, no crash
+            // The loser must not have claimed the endpoint's pid file on its way out.
+            DaemonEndpoint.pidFile(root).exists() shouldBe false
+        } finally {
+            socket.deleteRecursively()
+            DaemonEndpoint.pidFile(root).delete()
+            root.deleteRecursively()
+        }
+    }
+
     /** Sends one request over a fresh connection and collects the frames up to (and including) Exit. */
     private fun roundTrip(
         request: ClientRequest,

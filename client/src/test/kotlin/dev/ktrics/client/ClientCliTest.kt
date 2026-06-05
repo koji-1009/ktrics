@@ -42,7 +42,6 @@ class ClientCliTest {
                 listOf("analyze", "src/"),
                 cwd = cwd,
                 env = mapOf("PATH" to "/bin", "SECRET" to "x"),
-                columns = "120",
                 runner = { _, req ->
                     seen = req
                     0
@@ -50,7 +49,6 @@ class ClientCliTest {
             )
         code shouldBe 0
         seen!!.argv shouldBe listOf("analyze", "src/")
-        seen!!.terminalWidth shouldBe 120
         seen!!.env.containsKey("PATH") shouldBe true
         seen!!.env.containsKey("SECRET") shouldBe false
     }
@@ -206,12 +204,5 @@ class ClientCliTest {
     fun `relayEnv keeps only the curated keys and the ktrics namespace`() {
         val env = ClientCli.relayEnv(mapOf("PATH" to "/b", "HOME" to "/h", "KTRICS_X" to "1", "SECRET" to "s"))
         env.keys shouldBe setOf("PATH", "HOME", "KTRICS_X")
-    }
-
-    @Test
-    fun `terminalWidth parses COLUMNS and defaults to zero`() {
-        ClientCli.terminalWidth("120") shouldBe 120
-        ClientCli.terminalWidth(null) shouldBe 0
-        ClientCli.terminalWidth("wide") shouldBe 0
     }
 }

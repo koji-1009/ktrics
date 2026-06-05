@@ -5,6 +5,10 @@
   "description": "Schema for ktrics-dismissals.yaml. Wins on collision with comment dismissals.",
   "type": "object",
   "properties": {
+    "version": {
+      "const": 1,
+      "description": "Sidecar format version. Optional (absent reads as 1); a different value makes ktrics ignore the file loudly rather than half-apply a future format."
+    },
     "dismissals": {
       "type": "array",
       "items": {
