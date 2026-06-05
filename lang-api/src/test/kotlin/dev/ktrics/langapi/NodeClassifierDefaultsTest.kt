@@ -143,4 +143,16 @@ class NodeClassifierDefaultsTest {
         // Java never overrides this; the metric is Kotlin-scoped, so the default must be false.
         TreeClassifier().isScopeFunctionInvocation(stubNode()) shouldBe false
     }
+
+    @Test
+    fun `the cognitive branch-rule predicates default to no-ops`() {
+        // A classifier that opts into none of the per-branch rules charges nothing extra: no
+        // nesting-only boundaries, no flat increments, no else charge, no argument-closure skips.
+        val c = TreeClassifier()
+        val n = stubNode()
+        c.isNestingOnlyBoundary(n) shouldBe false
+        c.isFlatIncrement(n) shouldBe false
+        c.elseIncrement(n) shouldBe 0
+        c.isArgumentClosure(n) shouldBe false
+    }
 }

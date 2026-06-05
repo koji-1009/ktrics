@@ -2,6 +2,7 @@ package dev.ktrics.engine.cli.commands
 
 import dev.ktrics.engine.AnalysisEngine
 import dev.ktrics.engine.GraphSource
+import dev.ktrics.engine.WarmIndexCache
 import dev.ktrics.engine.cli.CommandContext
 import dev.ktrics.engine.cli.CommandHandler
 import dev.ktrics.engine.cli.Exit
@@ -18,6 +19,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.io.File
 import java.nio.file.Files
 
 /**
@@ -126,10 +128,19 @@ object RegressionCommand : CommandHandler {
         val worktree = Files.createTempDirectory("ktrics-rev-").toFile()
         return try {
             git.addWorktree(worktree, ref)
-            val pseudoCtx = ctx.copy(args = ctx.args, projectRoot = worktree)
-            val resolved = GraphSource.resolve(pseudoCtx, worktree)
+            // A worktree checks out the WHOLE repository. When the project lives in a repo
+            // subdirectory, the historical side must analyze the matching subtree — and load ITS
+            // ktrics.yaml — or the diff compares a different file set under a different config
+            // (the dartrics 0.8.0 `--root` defect class), with paths that never line up.
+            val historicalRoot = subtreePath(ctx, git)?.let { File(worktree, it) } ?: worktree
+            val pseudoCtx = ctx.copy(args = ctx.args, projectRoot = historicalRoot)
+            val resolved = GraphSource.resolve(pseudoCtx, historicalRoot)
+            // Historical config problems are surfaced but never fatal here: measurements are raw
+            // values (thresholds don't shape them), so a broken config AT THE REF degrades to default
+            // enablement rather than killing the comparison.
+            GraphSource.reportConfig(pseudoCtx, resolved)
             AnalysisEngine(
-                projectRoot = worktree,
+                projectRoot = historicalRoot,
                 settings = resolved.settings,
                 skips = resolved.skips,
                 // never share warm cache across refs
@@ -138,10 +149,25 @@ object RegressionCommand : CommandHandler {
                 resolved = resolved.resolved,
             ).analyze(resolved.graph).measurements
         } finally {
+            // The worktree dir never repeats, so its cache entry would otherwise leak a live session
+            // (an IntelliJ application + all PSI) per regression run, forever, in a warm daemon.
+            WarmIndexCache.evict(worktree)
             git.removeWorktree(worktree)
             worktree.deleteRecursively()
         }
     }
+
+    /** The project root's path relative to the repo toplevel, or null when it IS the toplevel. */
+    private fun subtreePath(
+        ctx: CommandContext,
+        git: GitClient,
+    ): String? =
+        runCatching {
+            val toplevel = git.topLevel()?.canonicalFile ?: return null
+            val root = ctx.projectRoot.canonicalFile
+            if (root == toplevel) return null
+            root.relativeTo(toplevel).path.takeIf { it.isNotEmpty() && !it.startsWith("..") }
+        }.getOrNull()
 
     private fun render(
         before: String,
@@ -151,10 +177,14 @@ object RegressionCommand : CommandHandler {
         buildString {
             appendLine("ktrics regression: $before → $after")
             appendLine(
-                "  improved: ${r.improved}  regressed: ${r.regressed}  unchanged: ${r.unchanged}  added: ${r.added}  removed: ${r.removed}",
+                "  improved: ${r.improved}  regressed: ${r.regressed}  unchanged: ${r.unchanged}  " +
+                    "neutral-delta: ${r.neutralDelta}  added: ${r.added}  removed: ${r.removed}",
             )
-            if (r.cosmeticRefactorSuspected) {
-                appendLine("  ⚠ cosmetic-refactor suspected: many tiny helpers added, lines up, complexity barely down.")
+            if (r.cosmeticSplitDetected) {
+                appendLine(
+                    "  cosmetic-split signature detected: many tiny helpers added, lines up, complexity barely down" +
+                        " (narrow heuristic, not a global verdict).",
+                )
             }
             val notable = r.entries.filter { it.change == Change.REGRESSED || it.change == Change.IMPROVED }
             if (notable.isNotEmpty()) {
@@ -181,9 +211,12 @@ object RegressionCommand : CommandHandler {
             appendLine("  improved: ${r.improved}")
             appendLine("  regressed: ${r.regressed}")
             appendLine("  unchanged: ${r.unchanged}")
+            appendLine("  neutralDelta: ${r.neutralDelta}")
             appendLine("  added: ${r.added}")
             appendLine("  removed: ${r.removed}")
-            appendLine("cosmeticRefactorSuspected: ${r.cosmeticRefactorSuspected}")
+            appendLine("# narrow heuristic, not a global verdict — false only means the cosmetic-split")
+            appendLine("# signature (many tiny helpers, lines up, complexity flat) did not match.")
+            appendLine("cosmeticSplitDetected: ${r.cosmeticSplitDetected}")
             val notable = r.entries.filter { it.change == Change.REGRESSED || it.change == Change.IMPROVED }
             if (notable.isEmpty()) {
                 appendLine("changes: []")
@@ -215,11 +248,12 @@ object RegressionCommand : CommandHandler {
                         put("improved", r.improved)
                         put("regressed", r.regressed)
                         put("unchanged", r.unchanged)
+                        put("neutralDelta", r.neutralDelta)
                         put("added", r.added)
                         put("removed", r.removed)
                     },
                 )
-                put("cosmeticRefactorSuspected", r.cosmeticRefactorSuspected)
+                put("cosmeticSplitDetected", r.cosmeticSplitDetected)
                 put(
                     "changes",
                     JsonArray(

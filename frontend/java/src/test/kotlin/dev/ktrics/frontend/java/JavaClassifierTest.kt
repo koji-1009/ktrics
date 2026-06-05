@@ -178,4 +178,27 @@ class JavaClassifierTest {
     fun `text returns the source of a node`() {
         classifier.text(shapes.function("straight").node).contains("straight") shouldBe true
     }
+
+    @Test
+    fun `else-if branches charge flat and plain else rides the owning if`() {
+        val body = shapes.function("elseIfChain").bodyNode!!
+        // Two `else if` links are flat increments; the final plain else charges +1 through its if.
+        classifier.descendants(body).count { classifier.isFlatIncrement(it) } shouldBe 2
+        classifier.descendants(body).sumOf { classifier.elseIncrement(it) } shouldBe 1
+    }
+
+    @Test
+    fun `a labeled continue is a flat increment`() {
+        val body = shapes.function("labeledJump").bodyNode!!
+        classifier.descendants(body).count { classifier.isFlatIncrement(it) } shouldBe 1
+    }
+
+    @Test
+    fun `lambdas are nesting-only boundaries and argument closures are recognised`() {
+        val body = shapes.function("lambdaNesting").bodyNode!!
+        classifier.descendants(body).count { classifier.isNestingOnlyBoundary(it) } shouldBe 1
+        classifier.descendants(body).count { classifier.isArgumentClosure(it) } shouldBe 1
+        // A lambda is no longer a FULL nesting boundary — it raises depth without a B1 increment.
+        classifier.descendants(body).count { classifier.isNestingBoundary(it) } shouldBe 1 // the if only
+    }
 }

@@ -32,3 +32,6 @@ Thumbs.db
 
 # --- Scratch ---
 /tmp/
+
+# --- Agent harness state (never project code) ---
+/.claude/

@@ -20,7 +20,29 @@ class CommentDismissals(text: String) {
     fun forDeclaration(
         declLine: Int,
         metric: String,
-    ): Dismissal? {
+    ): Dismissal? = matchInPreface(declLine, metric)?.second
+
+    /**
+     * The 1-based line of the directive [forDeclaration] would consume for ([declLine], [metric]), or
+     * null. Stale detection diffs the consumed lines against [allDirectives].
+     */
+    fun directiveLineFor(
+        declLine: Int,
+        metric: String,
+    ): Int? = matchInPreface(declLine, metric)?.first
+
+    /** Every directive in the file with its 1-based line — consumed or not (stale detection input). */
+    fun allDirectives(): List<CommentDirective> =
+        lines.mapIndexedNotNull { index, raw ->
+            val line = raw.trim()
+            if (!DismissSyntax.isDirectiveLine(line)) return@mapIndexedNotNull null
+            DismissSyntax.parseLine(line)?.let { (metric, reason) -> CommentDirective(index + 1, metric, reason) }
+        }
+
+    private fun matchInPreface(
+        declLine: Int,
+        metric: String,
+    ): Pair<Int, Dismissal>? {
         val keywordIndex = keywordIndex(declLine - 1) // 0-based index of the declaration's keyword line
         var index = keywordIndex - 1 // start directly above the keyword
         while (index >= 0) {
@@ -29,7 +51,7 @@ class CommentDismissals(text: String) {
                 line.isEmpty() -> return null // blank line invalidates
                 line.startsWith("@") -> index-- // annotation in the preface — keep scanning upward past it
                 isComment(line) -> {
-                    dismissalIn(line, metric)?.let { return it }
+                    dismissalIn(line, metric)?.let { return (index + 1) to it }
                     index-- // not this metric's directive: keep scanning the contiguous comment block upward
                 }
                 else -> return null // hit code; the directive (if any) wasn't in the preface

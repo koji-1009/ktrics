@@ -11,11 +11,14 @@ import dev.ktrics.langapi.NodeClassifier
  * the scope's language (the engine selects it), so calculators stay language-free.
  * [index] is the module-aware project view for cross-file/cross-module metrics (DIT/NOC, Martin
  * Ce/Ca); null in the function-level-only phase where no global data is required.
+ * [isTestFile] is true only when the `test:` config is on AND the unit is a conventional test file
+ * ([TestSources.isTestFile]); cognitive complexity applies its test-DSL discount under it.
  */
 class MeasureContext(
     val classifier: NodeClassifier,
     val unit: SourceUnit,
     val index: ProjectIndex? = null,
+    val isTestFile: Boolean = false,
 )
 
 /**

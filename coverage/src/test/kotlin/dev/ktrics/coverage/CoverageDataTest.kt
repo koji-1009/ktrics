@@ -38,6 +38,38 @@ class CoverageDataTest {
     }
 
     @Test
+    fun `merge unions per-module reports and sums shared keys`() {
+        // Multi-module builds emit one report per module; merge must union the scopes and aggregate
+        // a scope present in both (e.g. a shared source set tested from two modules).
+        val a = JacocoParser.parse(report("pkg/OnlyA" to (2 to 0), "pkg/Shared" to (1 to 3)))
+        val b = JacocoParser.parse(report("pkg/OnlyB" to (4 to 0), "pkg/Shared" to (3 to 1)))
+        val merged = a.merge(b)
+        merged.complexityJustified("pkg.OnlyA.m") shouldBe true
+        merged.complexityJustified("pkg.OnlyB.m") shouldBe true
+        // Shared: covered 1+3=4, missed 3+1=4 → 0.5 < 0.8.
+        merged.complexityJustified("pkg.Shared.m") shouldBe false
+        merged.forScope("pkg.Shared.m") shouldBe MethodCoverage(4, 4, 0, 0)
+    }
+
+    @Test
+    fun `merge with an empty side returns the other side unchanged`() {
+        val a = JacocoParser.parse(report("pkg/A" to (1 to 0)))
+        a.merge(CoverageData.EMPTY).forScope("pkg.A.m") shouldBe MethodCoverage(1, 0, 0, 0)
+        CoverageData.EMPTY.merge(a).forScope("pkg.A.m") shouldBe MethodCoverage(1, 0, 0, 0)
+    }
+
+    /** A minimal JaCoCo report with one `m` method per class: (covered to missed) branch counters. */
+    private fun report(vararg classes: Pair<String, Pair<Int, Int>>): String =
+        buildString {
+            append("""<?xml version="1.0" encoding="UTF-8"?><report name="r"><package name="pkg">""")
+            classes.forEach { (name, counters) ->
+                append("""<class name="$name" sourcefilename="X.kt"><method name="m" desc="()V" line="1">""")
+                append("""<counter type="BRANCH" missed="${counters.second}" covered="${counters.first}"/></method></class>""")
+            }
+            append("</package></report>")
+        }
+
+    @Test
     fun `overloaded methods sharing a scope key aggregate their counters`() {
         // JaCoCo emits one <method> per overload (distinct desc); the IR scope key `Owner.method` is
         // unsignatured, so both must roll up into one MethodCoverage rather than the last overwriting.

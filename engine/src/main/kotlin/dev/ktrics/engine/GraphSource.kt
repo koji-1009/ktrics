@@ -22,6 +22,10 @@ data class ResolvedProject(
     val configHash: String = "",
     /** Resolution turned on (auto/resolved → true; explicit name-based → false). */
     val resolved: Boolean = true,
+    /** Config problems (parse failure, bad threshold) — commands surface them and exit 78. */
+    val problems: List<String> = emptyList(),
+    /** Non-fatal config advisories (unknown keys) — surfaced on stderr, never fatal. */
+    val warnings: List<String> = emptyList(),
 )
 
 /**
@@ -49,7 +53,24 @@ object GraphSource {
             configHash = load.hash,
             // Resolution default is `auto`: resolve when possible, degrade per-edge.
             resolved = config.resolution != ResolutionMode.NAME_BASED,
+            problems = load.problems,
+            warnings = load.warnings,
         )
+    }
+
+    /**
+     * Surfaces config diagnostics on stderr; returns false when problems make the config unusable —
+     * the command must exit 78 (BAD_CONFIG). Previously a malformed `ktrics.yaml` silently ran with
+     * built-in defaults and exited 0, so an agent believed its configured gates passed when they
+     * were never applied.
+     */
+    fun reportConfig(
+        ctx: CommandContext,
+        resolved: ResolvedProject,
+    ): Boolean {
+        resolved.warnings.forEach { ctx.sink.errLine("ktrics: config warning: $it") }
+        resolved.problems.forEach { ctx.sink.errLine("ktrics: config error: $it") }
+        return resolved.problems.isEmpty()
     }
 
     /** Parses repeated `--module name=src1,src2[:dep1,dep2]` flags into a graph. */

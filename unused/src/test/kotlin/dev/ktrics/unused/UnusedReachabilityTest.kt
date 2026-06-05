@@ -23,6 +23,152 @@ class UnusedReachabilityTest {
     }
 
     @Test
+    fun `a keep-alive annotation on a type covers its members`() {
+        val c = FakeClassifier()
+        // A @Serializable-style type whose public method is touched only reflectively (no in-project
+        // caller): the annotation keep-alive must propagate to members — dartrics' propagation rule.
+        val method = c.fn("toJson")
+        val entity = c.type("Payload", methods = listOf(method), annotations = listOf("Serializable"))
+        val plainMethod = c.fn("compute")
+        val plain = c.type("Plain", methods = listOf(plainMethod))
+        val config = UnusedConfig(keepAliveAnnotations = setOf("Serializable"))
+        val report = UnusedDetector(listOf(unit(types = listOf(entity, plain))), { c }, config).detect()
+        val names = report.unused.map { it.displayName }
+        names shouldNotContain "Payload"
+        names shouldNotContain "Payload.toJson()"
+        // The un-annotated control: its member is still reported, so the propagation is annotation-scoped.
+        names shouldContain "Plain.compute()"
+    }
+
+    @Test
+    fun `keep-alive propagation reaches nested types and stops at name prefixes`() {
+        val c = FakeClassifier()
+        val nestedMethod = c.fn("write")
+        val nested = c.type("Companion", pkg = "pkg.Payload", methods = listOf(nestedMethod))
+        val entity = c.type("Payload", nested = listOf(nested), annotations = listOf("Serializable"))
+        // `pkg.PayloadExtra` shares the kept key as a NAME prefix but is a different type — not covered.
+        val lookalike = c.type("PayloadExtra")
+        val config = UnusedConfig(keepAliveAnnotations = setOf("Serializable"))
+        val report = UnusedDetector(listOf(unit(types = listOf(entity, lookalike))), { c }, config).detect()
+        val names = report.unused.map { it.displayName }
+        names shouldNotContain "Companion.write()"
+        names shouldContain "PayloadExtra"
+    }
+
+    // --- supertype keep-alive (frameworks that instantiate by inheritance, e.g. Android) ---
+
+    @Test
+    fun `a configured supertype suffix keeps a framework-instantiated type, its members, and its callees`() {
+        val c = FakeClassifier()
+        // MainActivity is manifest-wired: nothing in source references it, but it must stay alive —
+        // along with its members and the helper its body calls (it is a ROOT, not just unreported).
+        val helper = c.fn("renderHelp")
+        val onCreate = c.fn("setup", calls = listOf("renderHelp"))
+        val activity = c.type("MainActivity", methods = listOf(onCreate), supertypes = listOf("AppCompatActivity"))
+        val orphan = c.type("Orphan")
+        val config = UnusedConfig(keepAliveSupertypes = setOf("Activity"))
+        val report = UnusedDetector(listOf(unit(fns = listOf(helper), types = listOf(activity, orphan))), { c }, config).detect()
+        val names = report.unused.map { it.displayName }
+        names shouldNotContain "MainActivity"
+        names shouldNotContain "MainActivity.setup()"
+        names shouldNotContain "renderHelp()" // reached FROM the kept root
+        names shouldContain "Orphan" // the control: no matching supertype, still reported
+    }
+
+    @Test
+    fun `supertype keep-alive is transitive through project base classes`() {
+        val c = FakeClassifier()
+        // Main : Base, Base : AppCompatActivity — Main carries no framework suffix of its own, but
+        // extends a kept project type, so the closure must keep it (and its members) too.
+        val base = c.type("Base", supertypes = listOf("AppCompatActivity"))
+        val show = c.fn("show")
+        val main = c.type("Main", methods = listOf(show), supertypes = listOf("Base"))
+        val config = UnusedConfig(keepAliveSupertypes = setOf("Activity"))
+        val report = UnusedDetector(listOf(unit(types = listOf(base, main))), { c }, config).detect()
+        val names = report.unused.map { it.displayName }
+        names shouldNotContain "Base"
+        names shouldNotContain "Main"
+        names shouldNotContain "Main.show()"
+    }
+
+    @Test
+    fun `supertype matching is a case-sensitive suffix - CamelCase bounds it`() {
+        val c = FakeClassifier()
+        // GridView ends with `View` (kept); Preview's lowercase tail does NOT match `View`.
+        val widget = c.type("Chart", supertypes = listOf("GridView"))
+        val preview = c.type("Thumb", supertypes = listOf("Preview"))
+        val config = UnusedConfig(keepAliveSupertypes = setOf("View"))
+        val report = UnusedDetector(listOf(unit(types = listOf(widget, preview))), { c }, config).detect()
+        val names = report.unused.map { it.displayName }
+        names shouldNotContain "Chart"
+        names shouldContain "Thumb"
+    }
+
+    @Test
+    fun `without configured supertypes an extending type is still reported`() {
+        val c = FakeClassifier()
+        val activity = c.type("MainActivity", supertypes = listOf("AppCompatActivity"))
+        val report = UnusedDetector(listOf(unit(types = listOf(activity))), { c }).detect()
+        report.unused.map { it.displayName } shouldContain "MainActivity"
+    }
+
+    @Test
+    fun `a suffix does not keep inheritance RESOLVED to a project type - the closure governs it`() {
+        val c = FakeClassifier()
+        // Both ends in-project, resolved: UserService : pkg.CrudService. `Service` is just naming
+        // convention here, not a framework instantiation — neither may be suppressed by the suffix.
+        val base = c.type("CrudService")
+        val resolvedSuper = dev.ktrics.ir.TypeRef("CrudService", "pkg.CrudService", "pkg", Resolution.RESOLVED)
+        val user = c.type("UserService", supertypeRefs = listOf(resolvedSuper))
+        val config = UnusedConfig(keepAliveSupertypes = setOf("Service"))
+        val report = UnusedDetector(listOf(unit(types = listOf(base, user))), { c }, config).detect()
+        val names = report.unused.map { it.displayName }
+        names shouldContain "UserService"
+        names shouldContain "CrudService"
+    }
+
+    @Test
+    fun `a suffix keeps inheritance resolved to an EXTERNAL class without any package allowlist`() {
+        val c = FakeClassifier()
+        // Third-party Android bases (material, flutter, any SDK) resolve outside the project; the
+        // suffix must keep them without ktrics maintaining a framework-package list.
+        val flutter =
+            c.type(
+                "Embedding",
+                supertypeRefs =
+                    listOf(
+                        dev.ktrics.ir.TypeRef(
+                            "FlutterActivity",
+                            "io.flutter.embedding.android.FlutterActivity",
+                            "io.flutter.embedding.android",
+                            dev.ktrics.ir.Resolution.RESOLVED,
+                        ),
+                    ),
+            )
+        val config = UnusedConfig(keepAliveSupertypes = setOf("Activity"))
+        val report = UnusedDetector(listOf(unit(types = listOf(flutter))), { c }, config).detect()
+        report.unused.map { it.displayName } shouldNotContain "Embedding"
+    }
+
+    @Test
+    fun `the closure matches resolved edges by exact key, not by homonym`() {
+        val c = FakeClassifier()
+        // Kept base in pkg; a type resolving its supertype to a DIFFERENT package's homonym `Base`
+        // must not ride the kept one in resolved mode.
+        val keptBase = c.type("Base", supertypes = listOf("AppCompatActivity"))
+        val rider =
+            c.type(
+                "Rider",
+                supertypeRefs = listOf(dev.ktrics.ir.TypeRef("Base", "other.Base", "other", dev.ktrics.ir.Resolution.RESOLVED)),
+            )
+        val config = UnusedConfig(keepAliveSupertypes = setOf("Activity"))
+        val report = UnusedDetector(listOf(unit(types = listOf(keptBase, rider))), { c }, config).detect()
+        val names = report.unused.map { it.displayName }
+        names shouldNotContain "Base"
+        names shouldContain "Rider" // homonym supertype in another package: not the kept project Base
+    }
+
+    @Test
     fun `Kotlin internal is part of the reportable surface`() {
         val c = FakeClassifier()
         val internalOrphan = c.fn("internalOrphan", visibility = Visibility.INTERNAL)

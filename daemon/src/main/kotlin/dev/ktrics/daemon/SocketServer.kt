@@ -53,7 +53,15 @@ class SocketServer(
         if (!cleanStaleSocket()) return
         socketPath.parentFile.mkdirs()
         val channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
-        channel.bind(UnixDomainSocketAddress.of(socketPath.toPath()))
+        try {
+            channel.bind(UnixDomainSocketAddress.of(socketPath.toPath()))
+        } catch (_: java.io.IOException) {
+            // Two fresh daemons can both pass the cleanStaleSocket probe before either binds; the
+            // loser's bind throws. The incumbent serves the client — exit cleanly, not with a stack
+            // trace, and leave the winner's socket/pid files alone.
+            runCatching { channel.close() }
+            return
+        }
         server = channel
         writePidFile()
         Runtime.getRuntime().addShutdownHook(Thread(::cleanup))

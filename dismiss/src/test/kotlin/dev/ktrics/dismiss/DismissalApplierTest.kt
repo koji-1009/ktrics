@@ -193,4 +193,69 @@ class DismissalApplierTest {
             )
         applier.apply(listOf(v)).single().dismissal shouldBe DismissalState.None
     }
+
+    // --- stale detection: directives whose violation no longer fires ---
+
+    @Test
+    fun `an unmatched sidecar entry is reported stale and a consumed one is not`() {
+        val v = violation()
+        val consumed =
+            Dismissal(reason = "reviewed: intentional state machine", source = "sidecar", metric = cyclomatic.id, scope = v.scope)
+        val dead =
+            Dismissal(reason = "the violation this suppressed is gone", source = "sidecar", metric = cyclomatic.id, scope = "com.x.Gone.fn")
+        val applier = DismissalApplier(File("."), sidecar(consumed, dead), strict = false)
+        val stale = applier.staleDismissals(listOf(v), analyzedFiles = emptyList())
+        stale.single().scope shouldBe "com.x.Gone.fn"
+        stale.single().source shouldBe "sidecar"
+    }
+
+    @Test
+    fun `an unmatched comment directive is reported stale with its file and line`() {
+        val dir = createTempDirectory("stale").toFile()
+        try {
+            // The directive precedes a function that no longer violates anything.
+            File(dir, "src").mkdirs()
+            File(dir, "src/Foo.kt").writeText(
+                """
+                // ktrics:dismiss cyclomatic-complexity reason="was branchy before the refactor"
+                fun fine() = 1
+                """.trimIndent(),
+            )
+            val applier = DismissalApplier(dir, Sidecar.EMPTY, strict = false)
+            val stale = applier.staleDismissals(emptyList(), analyzedFiles = listOf("src/Foo.kt"))
+            stale.single().source shouldBe "comment"
+            stale.single().file shouldBe "src/Foo.kt"
+            stale.single().line shouldBe 1
+            stale.single().metric shouldBe "cyclomatic-complexity"
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a comment directive consumed by a live violation is not stale`() {
+        val dir = createTempDirectory("consumed").toFile()
+        try {
+            File(dir, "src").mkdirs()
+            File(dir, "src/Foo.kt").writeText(
+                """
+                // ktrics:dismiss cyclomatic-complexity reason="reviewed: intentional state machine"
+                fun bar() = 1
+                """.trimIndent(),
+            )
+            // The violation's span starts at the declaration line the directive precedes.
+            val v = violation(file = "src/Foo.kt", line = 2)
+            val applier = DismissalApplier(dir, Sidecar.EMPTY, strict = false)
+            applier.staleDismissals(listOf(v), analyzedFiles = listOf("src/Foo.kt")) shouldBe emptyList()
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `strict mode reports no stale dismissals`() {
+        // Under --strict-dismiss every directive is ignored, so everything would read stale — noise.
+        val dead = Dismissal(reason = "anything at all goes here now", source = "sidecar", metric = cyclomatic.id, scope = "x.Gone")
+        DismissalApplier(File("."), sidecar(dead), strict = true).staleDismissals(emptyList(), emptyList()) shouldBe emptyList()
+    }
 }

@@ -46,4 +46,14 @@ class SessionPathsTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun `projectRelativePath relativizes under the root, normalizes separators, and passes through outsiders`() {
+        val sep = java.io.File.separatorChar
+        val root = java.io.File("${sep}work${sep}proj")
+        // Under the root → relative, '/'-separated (the form git output and config globs compare against).
+        projectRelativePath("${sep}work${sep}proj${sep}src${sep}A.kt", root) shouldBe "src/A.kt"
+        // Outside the root → passed through (still '/'-normalized so downstream comparisons hold).
+        projectRelativePath("${sep}elsewhere${sep}B.kt", root) shouldBe "/elsewhere/B.kt"
+    }
 }

@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
 
 /** How a single (scope, metric) measurement moved between two refs. */
 @Serializable
-enum class Change { IMPROVED, REGRESSED, UNCHANGED, ADDED, REMOVED }
+enum class Change { IMPROVED, REGRESSED, UNCHANGED, NEUTRAL_DELTA, ADDED, REMOVED }
 
 @Serializable
 data class RegressionEntry(
@@ -27,10 +27,12 @@ data class RegressionReport(
     val improved: Int,
     val regressed: Int,
     val unchanged: Int,
+    /** Informational-polarity metrics whose value moved — a delta with no better/worse verdict. */
+    val neutralDelta: Int,
     val added: Int,
     val removed: Int,
-    /** The cosmetic-refactor heuristic fired: churn that shuffles code without reducing complexity. */
-    val cosmeticRefactorSuspected: Boolean,
+    /** The cosmetic-split signature matched: many tiny helpers, lines up, complexity barely down. */
+    val cosmeticSplitDetected: Boolean,
 )
 
 /**
@@ -63,9 +65,10 @@ object Regression {
             improved = entries.count { it.change == Change.IMPROVED },
             regressed = entries.count { it.change == Change.REGRESSED },
             unchanged = entries.count { it.change == Change.UNCHANGED },
+            neutralDelta = entries.count { it.change == Change.NEUTRAL_DELTA },
             added = entries.count { it.change == Change.ADDED },
             removed = entries.count { it.change == Change.REMOVED },
-            cosmeticRefactorSuspected = detectCosmeticRefactor(beforeByKey, afterByKey),
+            cosmeticSplitDetected = detectCosmeticRefactor(beforeByKey, afterByKey),
         )
     }
 
@@ -76,7 +79,10 @@ object Regression {
     ): Change {
         if (before == null) return if (after == null) Change.UNCHANGED else Change.ADDED
         if (after == null) return Change.REMOVED
-        if (before == after || polarity == Polarity.INFORMATIONAL) return Change.UNCHANGED
+        if (before == after) return Change.UNCHANGED
+        // An informational metric that MOVED is a distinct signal (dartrics' neutralDelta), not
+        // "unchanged" — there is just no better/worse verdict to attach to the movement.
+        if (polarity == Polarity.INFORMATIONAL) return Change.NEUTRAL_DELTA
         val improved = if (polarity == Polarity.LOWER_IS_BETTER) after < before else after > before // else: HIGHER_IS_BETTER
         return if (improved) Change.IMPROVED else Change.REGRESSED
     }

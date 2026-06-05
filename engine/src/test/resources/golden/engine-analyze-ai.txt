@@ -5,6 +5,13 @@ summary:
   files: 1 (java: 0, kotlin: 1)
   violations: 2 (errors: 0, warnings: 2)
   name-based-results: 0
+# Entries included per section. With --limit, dropped tails
+# land in a trailing truncated block (total = counts + drops).
+counts:
+  violations: 2
+  unused: 0
+  staleDismissals: 0
+  signals: 0
 violations:
   - id: 5dc192e524504153
     metric: boolean-trap

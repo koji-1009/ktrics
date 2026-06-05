@@ -62,15 +62,15 @@ object ConfigLoader {
         val k = root.child("ktrics") as? YamlMap ?: root
         warnUnknownKeys(k, KNOWN_TOP_LEVEL_KEYS, warnings)
         return KtricsConfig(
-            compose = k.bool("compose") ?: false,
-            test = k.bool("test") ?: false,
+            compose = k.strictBool("compose", "compose", problems) ?: false,
+            test = k.strictBool("test", "test", problems) ?: false,
             resolution =
                 k.string("resolution")?.let {
                     ResolutionMode.fromId(it) ?: warn(problems, "resolution", it)
                 } ?: ResolutionMode.AUTO,
             modules = parseModules(k.child("modules") as? YamlMap, problems),
             metrics = parseMetrics(k.child("metrics") as? YamlMap, problems),
-            unused = parseUnused(k.child("unused") as? YamlMap),
+            unused = parseUnused(k.child("unused") as? YamlMap, problems),
             exclude = (k.child("exclude") as? YamlList).strings(),
             snapshot = SnapshotConfig(mode = (k.child("snapshot") as? YamlMap)?.string("mode") ?: "baseline"),
         )
@@ -119,16 +119,22 @@ object ConfigLoader {
                 is YamlMap ->
                     id to
                         MetricEntry(
-                            enabled = valueNode.bool("enabled"),
-                            warning = valueNode.double("warning"),
-                            error = valueNode.double("error"),
+                            enabled = valueNode.strictBool("enabled", "metric '$id' enabled", problems),
+                            warning = valueNode.threshold("warning", "metric '$id'", problems),
+                            error = valueNode.threshold("error", "metric '$id'", problems),
                             java =
                                 (valueNode.child("java") as? YamlMap)?.let {
-                                    PerLangThresholds(it.double("warning"), it.double("error"))
+                                    PerLangThresholds(
+                                        it.threshold("warning", "metric '$id' (java)", problems),
+                                        it.threshold("error", "metric '$id' (java)", problems),
+                                    )
                                 },
                             kotlin =
                                 (valueNode.child("kotlin") as? YamlMap)?.let {
-                                    PerLangThresholds(it.double("warning"), it.double("error"))
+                                    PerLangThresholds(
+                                        it.threshold("warning", "metric '$id' (kotlin)", problems),
+                                        it.threshold("error", "metric '$id' (kotlin)", problems),
+                                    )
                                 },
                         )
                 else -> null
@@ -136,12 +142,16 @@ object ConfigLoader {
         }.toMap()
     }
 
-    private fun parseUnused(node: YamlMap?): UnusedConfig {
+    private fun parseUnused(
+        node: YamlMap?,
+        problems: MutableList<String>,
+    ): UnusedConfig {
         if (node == null) return UnusedConfig()
         return UnusedConfig(
             entryPoints = (node.child("entry-points") as? YamlList).strings().ifEmpty { listOf("main", "@Test") },
             ignoreAnnotations = (node.child("ignore-annotations") as? YamlList).strings(),
             presets = (node.child("presets") as? YamlList).strings(),
+            autoPresets = node.strictBool("auto-presets", "unused.auto-presets", problems) ?: true,
         )
     }
 
@@ -194,9 +204,45 @@ object ConfigLoader {
 
     private fun YamlMap.string(key: String): String? = (child(key) as? YamlScalar)?.content
 
-    private fun YamlMap.bool(key: String): Boolean? = (child(key) as? YamlScalar)?.content?.toBooleanStrictOrNull()
+    /**
+     * A metric threshold MUST be a number: a non-numeric value (`warning: "abc"`, `warning: true`,
+     * a nested map) was previously dropped to null silently, so a gate with no built-in default never
+     * fired while the run still exited 0 — exactly the failure dartrics 0.8.0 fixed. A QUOTED number
+     * (`"10"`) is indistinguishable from a bare one here (kaml resolves the scalar before we see it)
+     * and is accepted as that number.
+     */
+    private fun YamlMap.threshold(
+        key: String,
+        label: String,
+        problems: MutableList<String>,
+    ): Double? {
+        val node = child(key) ?: return null
+        val content = (node as? YamlScalar)?.content
+        val value = content?.toDoubleOrNull()
+        if (value == null) {
+            problems.add("$label threshold '$key' must be a number (got '${content ?: "non-scalar"}')")
+        }
+        return value
+    }
 
-    private fun YamlMap.double(key: String): Double? = (child(key) as? YamlScalar)?.content?.toDoubleOrNull()
+    /**
+     * A boolean flag parsed leniently (`true`/`yes`/`on`, case-insensitive — YAML 1.1 spellings a
+     * hand-written config plausibly uses); anything else present-but-unparseable is recorded as a
+     * problem instead of silently reading as "not set".
+     */
+    private fun YamlMap.strictBool(
+        key: String,
+        label: String,
+        problems: MutableList<String>,
+    ): Boolean? {
+        val node = child(key) ?: return null
+        val content = (node as? YamlScalar)?.content
+        val value = content?.let { parseYamlBool(it) }
+        if (value == null) {
+            problems.add("'$label' must be a boolean (got '${content ?: "non-scalar"}')")
+        }
+        return value
+    }
 
     private fun YamlList?.strings(): List<String> = this?.items?.mapNotNull { (it as? YamlScalar)?.content } ?: emptyList()
 }

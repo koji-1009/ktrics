@@ -6,6 +6,7 @@ import com.intellij.psi.PsiField
 import com.intellij.psi.PsiJavaFile
 import com.intellij.psi.PsiMethod
 import dev.ktrics.frontend.SpanFactory
+import dev.ktrics.frontend.projectRelativePath
 import dev.ktrics.ir.FieldDecl
 import dev.ktrics.ir.FunctionDecl
 import dev.ktrics.ir.Lang
@@ -114,9 +115,5 @@ class JavaFrontend(
             isProperty = false,
         )
 
-    private fun relativePath(file: PsiJavaFile): String {
-        val abs = file.virtualFile?.path ?: file.name
-        val rootPath = projectRoot.absolutePath
-        return if (abs.startsWith(rootPath)) abs.removePrefix(rootPath).trimStart(File.separatorChar) else abs
-    }
+    private fun relativePath(file: PsiJavaFile): String = projectRelativePath(file.virtualFile?.path ?: file.name, projectRoot)
 }

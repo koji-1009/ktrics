@@ -56,6 +56,11 @@ subprojects {
 
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
+        // Session-backed suites boot many embedded IntelliJ platforms in one test JVM; the default
+        // sizing exhausts native/metaspace memory and kills the executor outright once a module's
+        // session count grows. Size the test JVM for the platform, not for plain unit tests.
+        maxHeapSize = "2g"
+        jvmArgs("-XX:MaxMetaspaceSize=1g")
         // Golden tests are the backbone: fail loudly, show the diff.
         testLogging {
             events("passed", "skipped", "failed")

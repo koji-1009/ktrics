@@ -98,8 +98,11 @@ class ConfigLoaderParseTest {
     }
 
     @Test
-    fun `an object metric with non-numeric thresholds resolves them to null, not a crash`() {
-        // The lenient node-walking accessors must tolerate a wrong-typed value (return null), keeping the entry.
+    fun `a non-numeric threshold is reported as a problem, never silently dropped`() {
+        // `warning: "abc"` previously parsed to null with NO diagnostic, so a gate with no built-in
+        // default never fired while the run still exited 0 — the dartrics 0.8.0 failure class. The
+        // entry survives (analysis still runs); the problem makes doctor/analyze surface it.
+        val problems = ArrayList<String>()
         val cfg =
             ConfigLoader.parse(
                 """
@@ -108,11 +111,36 @@ class ConfigLoaderParseTest {
                     cyclomatic-complexity:
                       enabled: "yes"
                       warning: "abc"
+                      error: true
                 """.trimIndent(),
+                problems,
             )
         val entry = cfg.metrics["cyclomatic-complexity"]!!
-        entry.warning shouldBe null // non-numeric → null
-        entry.enabled shouldBe null // not a strict boolean → null
+        entry.warning shouldBe null
+        entry.error shouldBe null
+        entry.enabled shouldBe true // YAML-1.1 boolean spelling, quoted — accepted leniently
+        problems shouldContainExactly
+            listOf(
+                "metric 'cyclomatic-complexity' threshold 'warning' must be a number (got 'abc')",
+                "metric 'cyclomatic-complexity' threshold 'error' must be a number (got 'true')",
+            )
+    }
+
+    @Test
+    fun `a quoted numeric threshold is accepted as that number`() {
+        // kaml resolves the scalar before the loader sees it, so `"10"` is indistinguishable from 10;
+        // accepting it (documented) beats rejecting what most YAML users consider equivalent.
+        val problems = ArrayList<String>()
+        val cfg = ConfigLoader.parse("ktrics:\n  metrics:\n    cyclomatic-complexity:\n      warning: \"10\"\n", problems)
+        cfg.metrics["cyclomatic-complexity"]!!.warning shouldBe 10.0
+        problems shouldBe emptyList()
+    }
+
+    @Test
+    fun `a garbage boolean flag is reported as a problem`() {
+        val problems = ArrayList<String>()
+        ConfigLoader.parse("ktrics:\n  test: maybe\n", problems)
+        problems shouldContainExactly listOf("'test' must be a boolean (got 'maybe')")
     }
 
     @Test
@@ -157,11 +185,21 @@ class ConfigLoaderParseTest {
                     entry-points: [main, "@Custom"]
                     ignore-annotations: [Generated]
                     presets: [spring, jpa]
+                    auto-presets: false
                 """.trimIndent(),
             )
         cfg.unused.entryPoints shouldContainExactly listOf("main", "@Custom")
         cfg.unused.ignoreAnnotations shouldContainExactly listOf("Generated")
         cfg.unused.presets shouldContainExactly listOf("spring", "jpa")
+        cfg.unused.autoPresets shouldBe false
+    }
+
+    @Test
+    fun `auto-presets defaults on and a garbage value is a problem`() {
+        ConfigLoader.parse("ktrics:\n  unused:\n    presets: [spring]\n").unused.autoPresets shouldBe true
+        val problems = ArrayList<String>()
+        ConfigLoader.parse("ktrics:\n  unused:\n    auto-presets: maybe\n", problems)
+        problems shouldContainExactly listOf("'unused.auto-presets' must be a boolean (got 'maybe')")
     }
 
     @Test

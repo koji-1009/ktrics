@@ -12,11 +12,19 @@ ktrics gates on **function-level** lenses only; **class- and package-level** len
 
 ## Cyclomatic complexity (McCabe 1976)
 
-`1 + decisionWeight` summed over the body. Decision points: `if`, `for`/`foreach`, `while`, `do`, each non-default `case`/`when` entry, `catch`, ternary/`?:`/elvis, and each `&&`/`||`. Java groups chained operators into one polyadic node, so `decisionWeight` returns the operator count there (a `a && b && c` contributes 2), matching Kotlin where each `&&` is its own node. Decisions inside nested lambdas are counted.
+`1 + decisionWeight` summed over the body. Decision points: `if`, `for`/`foreach`, `while`, `do`, each non-else `case`/`when` entry, `catch`, ternary/`?:`/elvis, and each `&&`/`||`. Java groups chained operators into one polyadic node, so `decisionWeight` returns the operator count there (a `a && b && c` contributes 2), matching Kotlin where each `&&` is its own node. Decisions inside nested lambdas are counted — in Kotlin, inline lambdas (`forEach`/`let` bodies) *are* the enclosing function's control flow, so the fold-in is deliberate (the sibling tool excludes closures; this is a per-language judgment, not an oversight).
+
+**Sealed dispatch discount (resolved mode):** a `when` whose subject resolves to a `sealed` class contributes no entry decisions — the compiler enforces exhaustiveness, so the arms are an enumeration, not a "did I forget one?" load (ports the sibling tool's sealed-switch rule). In name-based runs the subject cannot be resolved and entries count normally — the documented per-edge degrade.
 
 ## Cognitive complexity (SonarSource 2018)
 
-B1 increment per control structure + B2 nesting penalty (`+depth`) + B3 one increment per run of like logical operators. The nesting penalty applies inside lambdas and Kotlin scope functions. **Deviation:** `else`/`else if` chains are counted by their nesting structure rather than with the spec's exact per-branch rule; label jumps and direct recursion are not yet counted. `?.` alone adds nothing.
+B1 increment per control structure + B2 nesting penalty (`+depth`) + B3 one increment per run of like logical operators, per the spec's branch rules: `else if` and `else` charge +1 flat (the chain head pays the only nesting price), a labeled `break`/`continue` charges +1, and lambdas/local functions raise the nesting level **without** an increment of their own. `?.` alone adds nothing. **Deviation:** direct recursion is not yet counted; nested-lambda *content* still accrues to the enclosing function (nested callables are not extracted as separate scopes — see the cyclomatic note above).
+
+**Test-DSL discount (`test: true`):** on conventional test files, closures passed as call arguments (`test("…") { … }` registration callbacks) are skipped entirely — neither their contents nor their nesting accrue to the enclosing function, which otherwise fires purely on the closure-nesting tax of declarative suites. The function's own control flow and named helpers stay scored.
+
+## Maximum nesting level
+
+Control-structure depth only (`if`/loops/`when`/`catch`), with `else if` links sharing the chain head's level. **Lambdas deliberately do not count** — unlike cognitive's B2 — because counting them fires the lens on flat, idiomatic builder DSLs (`buildJsonArray { forEach { add(…) } }` reads linearly but stacks three closures). Confirmed by dogfooding: with lambdas counted, ktrics' own reporters lit up at "nesting 6–7" on code with no nested control flow at all.
 
 ## NPATH (Nejmeh 1988)
 

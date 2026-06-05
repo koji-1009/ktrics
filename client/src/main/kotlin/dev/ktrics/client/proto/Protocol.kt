@@ -30,8 +30,6 @@ data class ClientRequest(
     val argv: List<String>,
     val cwd: String,
     val env: Map<String, String> = emptyMap(),
-    /** Width hint so console reporters wrap correctly even though stdout is a socket. */
-    val terminalWidth: Int = 0,
 )
 
 /** A streamed frame from daemon to client. The client writes one [ClientRequest], reads frames to [Exit]. */

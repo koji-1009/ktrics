@@ -33,8 +33,37 @@ interface NodeClassifier {
      */
     fun decisionWeight(n: PsiElement): Int = if (isDecisionPoint(n)) 1 else 0
 
-    /** Increments cognitive nesting depth (B2): the bodies of if/loops/catch/lambda/scope-fn. */
+    /** Increments cognitive nesting depth (B2) AND charges a B1 increment: if/loops/when/catch. */
     fun isNestingBoundary(n: PsiElement): Boolean
+
+    /**
+     * Increments cognitive nesting depth WITHOUT a B1 increment (SonarSource: "nested methods and
+     * method-like structures such as lambdas" raise the nesting level but are not themselves control
+     * structures): lambdas and local functions.
+     */
+    fun isNestingOnlyBoundary(n: PsiElement): Boolean = false
+
+    /**
+     * Charges a FLAT B1 increment (+1, no nesting penalty, and no extra nesting for its children):
+     * the `else if` link of an if-chain, and a labeled `break`/`continue` (SonarSource's per-branch
+     * rule — a flat chain reads linearly, so only the head pays the nesting price). Checked before
+     * [isNestingBoundary] by the cognitive walk, so an `else if` (which is still an if node) stays flat.
+     */
+    fun isFlatIncrement(n: PsiElement): Boolean = false
+
+    /**
+     * The flat increment an `else` branch contributes through its owning `if` node: 1 when [n] is an
+     * if with a plain (non-`else if`) else branch, else 0. The else keyword has no node of its own in
+     * either PSI, so the charge rides on the if (SonarSource charges `else` +1, no nesting).
+     */
+    fun elseIncrement(n: PsiElement): Int = 0
+
+    /**
+     * A closure passed as a call argument (`items.forEach { … }`, `test("x") { … }`) — the shape the
+     * test-DSL discount skips on test files: registration callbacks are data handed to the DSL, not
+     * control flow of the enclosing function. False for everything else.
+     */
+    fun isArgumentClosure(n: PsiElement): Boolean = false
 
     /** A run of `&&`/`||` for cognitive B3 (a *sequence* of like operators counts once). */
     fun isLogicalSequence(n: PsiElement): Boolean

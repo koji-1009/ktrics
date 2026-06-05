@@ -2,7 +2,7 @@ package dev.ktrics.report
 
 import dev.ktrics.metric.Violation
 
-/** Markdown output: a summary plus a violations table, suitable for PR comments. */
+/** Markdown output: summary, violations, unused, signals, and stale-dismissal tables for PR comments. */
 class MarkdownReporter : Reporter {
     override fun render(report: AnalysisReport): String =
         buildString {
@@ -18,13 +18,16 @@ class MarkdownReporter : Reporter {
             appendLine()
             if (report.violations.isEmpty()) {
                 appendLine("✓ No violations.")
-                return@buildString
+            } else {
+                appendLine("## Violations")
+                appendLine()
+                appendLine("| sev | metric | scope | value | limit | loc | lang | res | id |")
+                appendLine("| --- | --- | --- | ---: | ---: | --- | --- | --- | --- |")
+                Actionability.sort(report.violations).forEach { v -> appendRow(v) }
             }
-            appendLine("## Violations")
-            appendLine()
-            appendLine("| sev | metric | scope | value | limit | loc | lang | res | id |")
-            appendLine("| --- | --- | --- | ---: | ---: | --- | --- | --- | --- |")
-            Actionability.sort(report.violations).forEach { v -> appendRow(v) }
+            appendUnused(report)
+            appendSignals(report)
+            appendStaleDismissals(report)
         }
 
     private fun StringBuilder.appendRow(v: Violation) {
@@ -34,6 +37,53 @@ class MarkdownReporter : Reporter {
             "| ${v.severity.wireName} | `${escape(v.metricId)}` | `${escape(v.scopeName)}` | " +
                 "${formatNumber(v.value)} | ${formatNumber(v.threshold)} | `${escape(loc)}` | ${v.lang.id} | $res | `${v.id}` |",
         )
+    }
+
+    private fun StringBuilder.appendUnused(report: AnalysisReport) {
+        if (report.unused.isEmpty()) return
+        appendLine()
+        appendLine("## Unused (reference)")
+        appendLine()
+        appendLine("> Leftover code to delete OR unwired implementations — confirm against intent first.")
+        appendLine()
+        appendLine("| kind | name | loc |")
+        appendLine("| --- | --- | --- |")
+        report.unused.forEach { u ->
+            appendLine("| ${escape(u.kind)} | `${escape(u.name)}` | `${escape("${u.file}:${u.line}")}` |")
+        }
+    }
+
+    private fun StringBuilder.appendSignals(report: AnalysisReport) {
+        if (report.signals.isEmpty()) return
+        appendLine()
+        appendLine("## Signals (reference)")
+        appendLine()
+        appendLine("> Call-graph fan-in/fan-out — reference values to compare against intent, not verdicts.")
+        appendLine()
+        appendLine("| scope | kind | fanInCallers | fanInCalls | fanOutCallees | fanOutCalls | loc |")
+        appendLine("| --- | --- | ---: | ---: | ---: | ---: | --- |")
+        report.signals.forEach { s ->
+            appendLine(
+                "| `${escape(s.scopeName)}` | ${escape(s.kind)} | ${s.fanInCallers} | ${s.fanInCalls} | " +
+                    "${s.fanOutCallees} | ${s.fanOutCalls} | `${escape("${s.file}:${s.line}")}` |",
+            )
+        }
+    }
+
+    private fun StringBuilder.appendStaleDismissals(report: AnalysisReport) {
+        if (report.staleDismissals.isEmpty()) return
+        appendLine()
+        appendLine("## Stale Dismissals")
+        appendLine()
+        appendLine("> The violations these directives suppressed no longer fire — remove the directives.")
+        appendLine()
+        appendLine("| source | where | metric | reason |")
+        appendLine("| --- | --- | --- | --- |")
+        report.staleDismissals.forEach { s ->
+            appendLine(
+                "| ${escape(s.source)} | `${escape(s.where())}` | ${s.metric?.let { "`${escape(it)}`" } ?: "—"} | ${escape(s.reason)} |",
+            )
+        }
     }
 
     /**

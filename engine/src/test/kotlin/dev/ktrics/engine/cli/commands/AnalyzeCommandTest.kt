@@ -255,6 +255,115 @@ class AnalyzeCommandTest {
     }
 
     @Test
+    fun `--since is scope-granular - an untouched sibling in a changed file stays filtered`() {
+        assumeTrue(gitAvailable(), "git not on PATH")
+        val repo = createTempDirectory("analyze-since-scope").toFile()
+        try {
+            File(repo, "src/main/kotlin").mkdirs()
+            val src = File(repo, "src/main/kotlin/X.kt")
+
+            // TWO violating siblings in one file — branchy enough (cc 26) to breach the ERROR
+            // threshold (20), so the run also exercises the error-severity recording path.
+            fun branchy(name: String) =
+                "fun $name(n: Int): Int {\n" +
+                    (1..25).joinToString("\n") { "    if (n == $it) return $it" } +
+                    "\n    return 0\n}\n"
+            src.writeText("package x\n\n" + branchy("f") + "\n" + branchy("g"))
+            git(repo, "init", "-q")
+            git(repo, "add", "-A")
+            git(repo, "commit", "-q", "-m", "init")
+            // Touch ONE line inside g's body only.
+            src.writeText(src.readText().replace("fun g(n: Int): Int {\n    if (n == 1)", "fun g(n: Int): Int {\n    if (n == 9)"))
+            val (code, sink) = run("--since", "HEAD", "--reporter", "ai", root = repo)
+            code shouldBe Exit.OK
+            val out = sink.out.toString()
+            // g's hunk intersects g's span → g surfaces; f is untouched → filtered, no file-granular leak.
+            out shouldContain "scope: x.g"
+            out.contains("scope: x.f") shouldBe false
+        } finally {
+            WarmIndexCache.clear()
+            repo.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a broken ktrics-yaml fails analyze loudly with exit 78`() {
+        val tmp = createTempDirectory("analyze-badcfg").toFile()
+        try {
+            File(tmp, "src/main/kotlin").mkdirs()
+            File(tmp, "src/main/kotlin/X.kt").writeText("package x\n\nfun f(): Int = 1\n")
+            // A threshold that YAML reads as a string: previously silently dropped → defaults + exit 0,
+            // so an agent believed its configured gate passed when it was never applied.
+            File(tmp, "ktrics.yaml").writeText("ktrics:\n  metrics:\n    cyclomatic-complexity:\n      warning: \"abc\"\n")
+            val (code, sink) = run(root = tmp)
+            code shouldBe Exit.BAD_CONFIG
+            sink.err.toString() shouldContain "must be a number"
+        } finally {
+            WarmIndexCache.clear()
+            tmp.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a stale comment dismissal is warned on stderr and listed in the ai report`() {
+        val tmp = createTempDirectory("analyze-stale").toFile()
+        try {
+            File(tmp, "src/main/kotlin").mkdirs()
+            // The directive precedes a function that violates nothing — the suppression is dead.
+            File(tmp, "src/main/kotlin/X.kt").writeText(
+                """
+                package x
+
+                // ktrics:dismiss cyclomatic-complexity reason="was branchy before the refactor"
+                fun fine(): Int = 1
+                """.trimIndent(),
+            )
+            val (code, sink) = run("--reporter", "ai", root = tmp)
+            code shouldBe Exit.OK
+            sink.err.toString() shouldContain "stale dismissal"
+            val out = sink.out.toString()
+            out shouldContain "staleDismissals:"
+            out shouldContain "counts:"
+            out shouldContain "  staleDismissals: 1"
+        } finally {
+            WarmIndexCache.clear()
+            tmp.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `--coverage accepts a comma-separated list and ingests every report`() {
+        val tmp = createTempDirectory("analyze-cov-multi").toFile()
+        try {
+            // The multi-module shape: each Gradle module emits its OWN jacoco.xml. The violating scope
+            // is covered only in the SECOND file — single-report ingestion would miss it entirely.
+            val covA = File(tmp, "module-a.xml")
+            covA.writeText(
+                """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <report name="a"><package name="other"><class name="other/Unrelated" sourcefilename="Unrelated.kt">
+                <method name="m" desc="()V" line="1"><counter type="BRANCH" missed="0" covered="2"/></method>
+                </class></package></report>
+                """.trimIndent(),
+            )
+            val covB = File(tmp, "module-b.xml")
+            covB.writeText(
+                """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <report name="b"><package name="sample"><class name="sample/Tangled" sourcefilename="Tangled.kt">
+                <method name="tangled" desc="(IZZZ)I" line="7"><counter type="BRANCH" missed="1" covered="9"/></method>
+                </class></package></report>
+                """.trimIndent(),
+            )
+            val (code, sink) = run("--coverage", "${covA.absolutePath},${covB.absolutePath}", "--reporter", "ai")
+            code shouldBe Exit.OK
+            sink.out.toString() shouldContain "complexityJustified: true"
+        } finally {
+            tmp.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `--snapshot cache writes only when absent, then compares without re-saving`() {
         val tmp = createTempDirectory("analyze-cache").toFile()
         try {
@@ -271,6 +380,38 @@ class AnalyzeCommandTest {
             second.second.err.toString() shouldContain "since baseline"
         } finally {
             WarmIndexCache.clear()
+            tmp.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a non-default snapshot mode from ktrics-yaml activates snapshotting without the flag`() {
+        val tmp = createTempDirectory("analyze-cfgsnap").toFile()
+        try {
+            File(tmp, "src/main/kotlin").mkdirs()
+            File(tmp, "src/main/kotlin/X.kt").writeText("package x\n\nfun f(): Int = 1\n")
+            // `cache` differs from the built-in default (`baseline`), so config alone turns it on.
+            File(tmp, "ktrics.yaml").writeText("ktrics:\n  snapshot: { mode: cache }\n")
+            val (code, sink) = run(root = tmp)
+            code shouldBe Exit.OK
+            File(tmp, ".ktrics/snapshot.json").isFile shouldBe true
+            sink.err.toString() shouldContain "baseline saved"
+        } finally {
+            WarmIndexCache.clear()
+            tmp.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a malformed coverage file is a bad-input error, not an internal fault`() {
+        val tmp = createTempDirectory("analyze-badcov").toFile()
+        try {
+            val cov = File(tmp, "broken.xml")
+            cov.writeText("this is not xml at all <<<")
+            val (code, sink) = run("--coverage", cov.absolutePath)
+            code shouldBe Exit.BAD_INPUT
+            sink.err.toString() shouldContain "could not parse coverage file"
+        } finally {
             tmp.deleteRecursively()
         }
     }

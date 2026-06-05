@@ -54,6 +54,7 @@ class ModelSurfaceTest {
         SkipPolicy.None.skipFunction(def, fnDecl("f"), type, unit) shouldBe false
         SkipPolicy.None.skipType(def, type, unit) shouldBe false
         SkipPolicy.None.skipFile(def, unit) shouldBe false
+        SkipPolicy.None.testDslDiscount(unit) shouldBe false
     }
 
     @Test

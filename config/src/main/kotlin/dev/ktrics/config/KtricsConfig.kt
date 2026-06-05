@@ -84,6 +84,8 @@ data class UnusedConfig(
     val entryPoints: List<String> = listOf("main", "@Test"),
     val ignoreAnnotations: List<String> = emptyList(),
     val presets: List<String> = emptyList(),
+    /** Auto-enable presets from the analyzed sources' imports (`androidx.*` → android, …); on by default. */
+    val autoPresets: Boolean = true,
 )
 
 data class SnapshotConfig(val mode: String = "baseline")

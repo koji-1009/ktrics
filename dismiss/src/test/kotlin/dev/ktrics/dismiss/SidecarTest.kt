@@ -113,4 +113,30 @@ class SidecarTest {
             )
         applier.apply(listOf(violation())).single().dismissal shouldBe DismissalState.None
     }
+
+    @Test
+    fun `version 1 is accepted and an unsupported version ignores the entries loudly`() {
+        val ok = Sidecar.parse("version: 1\ndismissals:\n  - metric: m\n    file: f\n    reason: long enough to count\n")
+        ok.dismissals.size shouldBe 1
+
+        // A future-format sidecar must not be half-applied: entries are dropped and the drop is surfaced.
+        val future = Sidecar.parse("version: 2\ndismissals:\n  - metric: m\n    file: f\n    reason: long enough to count\n")
+        future.dismissals shouldBe emptyList()
+        future.warnings.single() shouldContain "unsupported ktrics-dismissals version '2'"
+    }
+
+    @Test
+    fun `a malformed sidecar degrades to EMPTY with the failure surfaced as a warning`() {
+        // kaml throws on bad syntax, duplicate keys, and anchors; load() must degrade instead of
+        // crashing analyze with INTERNAL (70) — the failure is a config problem, surfaced by doctor.
+        val dir = createTempDirectory("sidecar").toFile()
+        try {
+            File(dir, "ktrics-dismissals.yaml").writeText("dismissals: [unclosed\n")
+            val sidecar = Sidecar.load(dir)
+            sidecar.dismissals shouldBe emptyList()
+            sidecar.warnings.single() shouldContain "failed to parse ktrics-dismissals.yaml"
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }

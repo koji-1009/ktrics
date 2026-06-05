@@ -9,6 +9,7 @@ import dev.ktrics.testsession.repoRoot
 import dev.ktrics.testsession.type
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldNotBeEmpty
+import io.kotest.matchers.collections.shouldNotContain
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -33,11 +34,101 @@ class ResolvedKotlinClassifierTest {
         fixture = SessionFixture(graph, repoRoot().resolve("testdata/metrics"), resolved = true)
         coupling = fixture.kotlinUnit("Coupling.kt")
         unresolved = fixture.kotlinUnit("Unresolved.kt")
+        operators = fixture.kotlinUnit("Operators.kt")
         classifier = fixture.classifier(Lang.KOTLIN) as ResolvedKotlinClassifier
     }
 
+    private lateinit var operators: SourceUnit
+
     @AfterAll
     fun tearDown() = fixture.close()
+
+    @Test
+    fun `operator forms resolve to the user-defined convention functions they invoke`() {
+        // `a + b` / `a[0]` / `1 in a` / `a()` carry no name reference to plus/get/contains/invoke —
+        // the dartrics 0.7.3 false-positive class. The resolved classifier must record each edge.
+        val keys = classifier.calledSymbols(operators.function("useThem").bodyNode!!).map { it.key }
+        keys shouldContain "calib.Vec.plus"
+        keys shouldContain "calib.Vec.get"
+        keys shouldContain "calib.Vec.contains"
+        keys shouldContain "calib.Vec.invoke"
+    }
+
+    @Test
+    fun `operator forms feed the call graph as exact resolved keys`() {
+        // `a + b` attributes fan-in to the exact plus it targets (the dartrics 0.7.3 signals fix).
+        val names = classifier.outgoingRefNames(operators.function("useThem").bodyNode!!)
+        names shouldContain "calib.Vec.plus"
+        names shouldContain "calib.Vec.get"
+    }
+
+    @Test
+    fun `a compound unary form degrades to its bare convention name`() {
+        // `v++` resolves as a compound access (not a simple function call), so the call-graph feed
+        // falls back to the bare convention name — the same shape the name-based classifier emits.
+        val names = classifier.outgoingRefNames(operators.function("useUnary").bodyNode!!)
+        names shouldContain "inc"
+    }
+
+    @Test
+    fun `stdlib operator targets are not recorded as calls`() {
+        // `x + other.x` resolves to kotlin.Int.plus — built-in arithmetic, not a message (same
+        // philosophy as CBO's primitive exclusion); recording it would inflate RFC on every method.
+        val keys = classifier.calledSymbols(operators.function("plus").bodyNode!!).map { it.key }
+        keys.none { it.startsWith("kotlin.") } shouldBe true
+    }
+
+    @Test
+    fun `destructuring, iteration, and delegation emit their convention names for reachability`() {
+        // These forms ride the name-based referencedNames channel (only ever ADDS reachability,
+        // never feeds the resolution stamp), so component1/iterator/getValue stay alive.
+        classifier.referencedNames(operators.function("useThem").node) shouldContain "component1"
+        val loop = classifier.referencedNames(operators.function("loopAndDelegate").node)
+        loop shouldContain "iterator"
+        loop shouldContain "hasNext"
+        loop shouldContain "next"
+        loop shouldContain "getValue"
+    }
+
+    @Test
+    fun `operator-only members are kept out of the unused report`() {
+        // End-to-end: main → useThem/loopAndDelegate reach every Vec operator ONLY via operator
+        // forms; none may surface as unused (--apply would otherwise delete live code).
+        val units = listOf(operators)
+        val report = dev.ktrics.unused.UnusedDetector(units, { classifier }).detect()
+        val unusedKeys = report.unused.map { it.key }
+        unusedKeys.none { it.startsWith("calib.Vec.") } shouldBe true
+        unusedKeys shouldNotContain "calib.Vec"
+    }
+
+    @Test
+    fun `an unresolvable type degrades to a name-based ref and a shadowed primitive is dropped`() {
+        // GhostType does not exist → the edge degrades to its written text, NAME_BASED.
+        val ghostRefs = classifier.referencedTypes(unresolved.function("unresolvedType").node)
+        ghostRefs.single { it.name == "GhostType" }.resolution shouldBe Resolution.NAME_BASED
+        // ShadowedPrimitive<Int>: `Int` resolves to the TYPE PARAMETER, not a class — it must be
+        // dropped rather than emitted as a spurious primitive coupling.
+        val shadowed = classifier.referencedTypes(unresolved.type("ShadowedPrimitive").node)
+        shadowed.none { it.name == "Int" } shouldBe true
+    }
+
+    @Test
+    fun `an exhaustive when over a sealed subject contributes no entry decisions`() {
+        // Sealed dispatch is compiler-enforced enumeration (the dartrics sealed-switch rule):
+        // resolved-mode cyclomatic weighs the entries 0 → the function's only decision weight is 0.
+        val sealed = fixture.kotlinUnit("Sealed.kt")
+        val body = sealed.function("sealedDispatch").bodyNode!!
+        val weight = (sequenceOf(body) + classifier.descendants(body)).sumOf { classifier.decisionWeight(it) }
+        weight shouldBe 0
+    }
+
+    @Test
+    fun `a when over a non-sealed subject keeps its entry decisions in resolved mode`() {
+        val shapes = fixture.kotlinUnit("KShapes.kt")
+        val body = shapes.function("whenFour").bodyNode!!
+        val weight = (sequenceOf(body) + classifier.descendants(body)).sumOf { classifier.decisionWeight(it) }
+        weight shouldBe 3 // three non-else entries; Int is not sealed
+    }
 
     @Test
     fun `referenced types resolve to qualified, RESOLVED refs`() {

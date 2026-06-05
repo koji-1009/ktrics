@@ -62,6 +62,18 @@ class CoverageData(private val byMethod: Map<String, MethodCoverage>) {
 
     fun isEmpty(): Boolean = byMethod.isEmpty()
 
+    /**
+     * Unions two reports (multi-module builds emit one JaCoCo XML per module): counters for a key
+     * present in both are summed, the same aggregation overloads sharing a key already use.
+     */
+    fun merge(other: CoverageData): CoverageData {
+        if (other.byMethod.isEmpty()) return this
+        if (byMethod.isEmpty()) return other
+        val merged = byMethod.toMutableMap()
+        other.byMethod.forEach { (key, cov) -> merged.merge(key, cov, MethodCoverage::plus) }
+        return CoverageData(merged)
+    }
+
     companion object {
         const val JUSTIFIED_THRESHOLD = 0.8
         val EMPTY = CoverageData(emptyMap())

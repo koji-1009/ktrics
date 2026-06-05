@@ -53,3 +53,22 @@ class SessionPaths(
 
     private fun List<File>.sorted(): List<File> = sortedBy { it.path }
 }
+
+/**
+ * The ONE absolute-path → project-relative mapping every frontend lowers report paths through.
+ * '/'-separated everywhere: report paths must compare equal to git output (always '/') and to
+ * config globs written with '/' — on Windows the native separator would silently match neither.
+ */
+fun projectRelativePath(
+    absolutePath: String,
+    projectRoot: File,
+): String {
+    val rootPath = projectRoot.absolutePath
+    val rel =
+        if (absolutePath.startsWith(rootPath)) {
+            absolutePath.removePrefix(rootPath).trimStart(File.separatorChar)
+        } else {
+            absolutePath
+        }
+    return rel.replace(File.separatorChar, '/')
+}

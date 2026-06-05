@@ -1,12 +1,15 @@
 package dev.ktrics.frontend.java
 
 import com.intellij.psi.JavaTokenType
+import com.intellij.psi.PsiBreakStatement
 import com.intellij.psi.PsiCatchSection
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiComment
 import com.intellij.psi.PsiConditionalExpression
+import com.intellij.psi.PsiContinueStatement
 import com.intellij.psi.PsiDoWhileStatement
 import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiExpressionList
 import com.intellij.psi.PsiForStatement
 import com.intellij.psi.PsiForeachStatement
 import com.intellij.psi.PsiIdentifier
@@ -65,10 +68,23 @@ open class JavaClassifier : NodeClassifier {
     override fun isNestingBoundary(n: PsiElement): Boolean =
         when (n) {
             is PsiIfStatement, is PsiForStatement, is PsiForeachStatement, is PsiWhileStatement,
-            is PsiDoWhileStatement, is PsiSwitchStatement, is PsiCatchSection, is PsiLambdaExpression,
+            is PsiDoWhileStatement, is PsiSwitchStatement, is PsiCatchSection,
             -> true
             else -> false
         }
+
+    // A lambda raises the nesting level WITHOUT a B1 increment (SonarSource: "method-like structures").
+    override fun isNestingOnlyBoundary(n: PsiElement): Boolean = n is PsiLambdaExpression
+
+    override fun isFlatIncrement(n: PsiElement): Boolean = isElseIfBranch(n) || isLabeledJump(n)
+
+    override fun elseIncrement(n: PsiElement): Int {
+        if (n !is PsiIfStatement) return 0
+        val elseBranch = n.elseBranch ?: return 0
+        return if (elseBranch is PsiIfStatement) 0 else 1 // `else if` charges via isFlatIncrement
+    }
+
+    override fun isArgumentClosure(n: PsiElement): Boolean = n is PsiLambdaExpression && n.parent is PsiExpressionList
 
     override fun isLogicalSequence(n: PsiElement): Boolean = n is PsiPolyadicExpression && isLogicalOperator(n)
 
@@ -81,6 +97,9 @@ open class JavaClassifier : NodeClassifier {
             else -> false
         }
 
+    // Deliberate asymmetry with isDecisionPoint: the `default` label IS an execution path (npath
+    // counts paths), while McCabe counts decisions (default is the absence of one) — so npath
+    // includes it and cyclomatic excludes it. Mirrors the Kotlin classifier's `else` entry handling.
     override fun npathMultiplier(n: PsiElement): Int =
         when (n) {
             is PsiSwitchStatement -> (n.body?.statements?.count { it is PsiSwitchLabelStatementBase } ?: 1).coerceAtLeast(2)
@@ -91,18 +110,6 @@ open class JavaClassifier : NodeClassifier {
     override fun parameters(fn: PsiElement): List<Param> {
         val method = fn as? PsiMethod ?: return emptyList()
         return method.parameterList.parameters.map { it.toParam() }
-    }
-
-    private fun PsiParameter.toParam(): Param {
-        val typeText = type.presentableText
-        return Param(
-            name = name,
-            typeName = typeText,
-            // Java has no default parameters
-            hasDefault = false,
-            isVararg = isVarArgs,
-            isBoolean = typeText == "boolean" || typeText == "Boolean",
-        )
     }
 
     override fun annotations(decl: PsiElement): List<String> {
@@ -228,3 +235,21 @@ open class JavaClassifier : NodeClassifier {
             if (children.isEmpty()) yield(root) else for (child in children) yieldAll(leaves(child))
         }
 }
+
+private fun PsiParameter.toParam(): Param {
+    val typeText = type.presentableText
+    return Param(
+        name = name,
+        typeName = typeText,
+        // Java has no default parameters
+        hasDefault = false,
+        isVararg = isVarArgs,
+        isBoolean = typeText == "boolean" || typeText == "Boolean",
+    )
+}
+
+/** The `else if` link of an if-chain: an if that IS its parent if's else branch (flat per spec). */
+private fun isElseIfBranch(n: PsiElement): Boolean = n is PsiIfStatement && (n.parent as? PsiIfStatement)?.elseBranch === n
+
+private fun isLabeledJump(n: PsiElement): Boolean =
+    (n is PsiBreakStatement && n.labelIdentifier != null) || (n is PsiContinueStatement && n.labelIdentifier != null)
