@@ -71,22 +71,23 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      # GraalVM JDK 25: native-image toolchain + jmods for jlink. 25's native-image locates current
-      # Visual Studio (the frozen community 21.0.2 could not find VS 2026).
+      # GraalVM JDK 25 supplies the native-image toolchain for :client:nativeCompile (25's native-image
+      # locates current Visual Studio; the frozen community 21.0.2 could not find VS 2026). :daemon:installDist
+      # needs only a JDK 21+ and rides on this one.
       - uses: graalvm/setup-graalvm@329c42c5f4c343bceb505f0b28cc8499bc2bf174 # v1.5.4
         with:
           java-version: '25'
           distribution: 'graalvm-community'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Self-contained jlink image (bundled JRE under bin/, app jars in lib/) — the archive needs no
-      # system Java. badass-runtime's `runtime` task isn't configuration-cache compatible.
-      - name: Build native client + self-contained daemon image
+      # installDist image: launcher scripts under bin/, app jars in lib/, NO bundled JRE — the daemon
+      # runs on the user's system Java 21+. native-image's task isn't configuration-cache compatible.
+      - name: Build native client + daemon image
         shell: bash
-        run: ./gradlew --no-daemon --no-configuration-cache :client:nativeCompile :daemon:runtime
+        run: ./gradlew --no-daemon --no-configuration-cache :client:nativeCompile :daemon:installDist
 
       # Drop the native `ktrics` into the daemon image's bin/ so DaemonLauncher finds `ktricsd` as a
-      # sibling (the bundled `java` + lib/ live alongside), then archive and attach it to the draft.
+      # sibling (the launcher scripts + lib/ jars live alongside), then archive and attach it to the draft.
       - name: Package and upload
         shell: bash
         env:
@@ -95,7 +96,7 @@ jobs:
           set -euo pipefail
           tag="${{ github.ref_name }}"
           stage="ktrics-${tag#v}-${{ matrix.target }}"
-          dist="daemon/build/image"
+          dist="daemon/build/install/ktricsd"
           if [ "${{ matrix.archive }}" = zip ]; then
             cp client/build/native/nativeCompile/ktrics.exe "$dist/bin/"
             mv "$dist" "$stage"
