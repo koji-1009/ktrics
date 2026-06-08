@@ -14,6 +14,15 @@ import java.io.File
  */
 class CommandRouter(
     private val server: DaemonControl,
+    /**
+     * The resolved project root this daemon serves — the root the client walked up to (nearest
+     * `ktrics.yaml` ancestor) and spawned us with via `--serve --root`. A daemon's socket is 1:1 with
+     * this root, so it is the canonical project root for EVERY request on this socket. Used as the
+     * default when a request carries no explicit `--root`: the relayed `cwd` is the client's raw
+     * working directory (a subdirectory, in the common case), and resolving config/module-graph from
+     * it would silently miss the project's `ktrics.yaml`.
+     */
+    private val serveRoot: File,
     private val cli: Cli = Cli.default(),
 ) {
     /** Minimal control surface the router needs from the running daemon. */
@@ -29,7 +38,7 @@ class CommandRouter(
         env: Map<String, String>,
         sink: CommandSink,
     ): Int {
-        val root = projectRoot(argv, cwd)
+        val root = projectRoot(argv)
         return when (val command = argv.firstOrNull()) {
             null, "--help", "-h" -> {
                 sink.out(usage())
@@ -79,12 +88,12 @@ class CommandRouter(
             }
         }
 
-    private fun projectRoot(
-        argv: List<String>,
-        cwd: String,
-    ): File {
+    private fun projectRoot(argv: List<String>): File {
+        // Explicit `--root` always wins; otherwise the daemon's canonical serve root, NOT the relayed
+        // cwd — the client resolved the project root by walking up to `ktrics.yaml` and spawned us with
+        // it, so falling back to cwd here would re-derive a subdirectory and silently ignore the config.
         val explicit = argv.zipWithNext().firstOrNull { it.first == "--root" }?.second
-        return File(explicit ?: cwd).absoluteFile.normalize()
+        return if (explicit != null) File(explicit).absoluteFile.normalize() else serveRoot
     }
 
     private fun usage(): String =

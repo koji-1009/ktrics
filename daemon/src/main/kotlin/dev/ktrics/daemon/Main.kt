@@ -16,7 +16,7 @@ fun main(args: Array<String>) {
         args.firstOrNull() == "--serve" -> {
             val root =
                 DaemonCli.optionValue(args.toList(), "--root")?.let { File(it) }
-                    ?: File(System.getProperty("user.dir"))
+                    ?: DaemonCli.findProjectRoot(File(System.getProperty("user.dir")))
             SocketServer(root.absoluteFile.normalize()).serve()
         }
         else -> exitProcess(DaemonCli.runForeground(args.toList()))

@@ -19,7 +19,9 @@ internal object DaemonCli {
         cwd: File = File(System.getProperty("user.dir")).absoluteFile.normalize(),
         cli: Cli = Cli.default(),
     ): Int {
-        val root = optionValue(argv, "--root")?.let { File(it) } ?: cwd
+        // Mirror the client's root resolution: explicit `--root` wins, else walk up to the nearest
+        // `ktrics.yaml` ancestor. A bare cwd fallback would miss the config when run from a subdirectory.
+        val root = optionValue(argv, "--root")?.let { File(it) } ?: findProjectRoot(cwd)
         return when (val command = argv.firstOrNull()) {
             null, "--help", "-h" -> {
                 sink.outLine("ktricsd ${BuildInfo.VERSION} — run with --serve, or pass a command for a cold one-shot run.")
@@ -46,4 +48,18 @@ internal object DaemonCli {
         argv: List<String>,
         name: String,
     ): String? = argv.zipWithNext().firstOrNull { it.first == name }?.second
+
+    /**
+     * Nearest ancestor of [start] containing `ktrics.yaml`/`ktrics.yml`, else [start] itself
+     * (normalized). Mirrors the client's `resolveProjectRoot` so the daemon resolves the same project
+     * root the client would, regardless of which subdirectory a command is run from.
+     */
+    fun findProjectRoot(start: File): File {
+        var dir: File? = start.absoluteFile
+        while (dir != null) {
+            if (File(dir, "ktrics.yaml").isFile || File(dir, "ktrics.yml").isFile) return dir
+            dir = dir.parentFile
+        }
+        return start.absoluteFile.normalize()
+    }
 }

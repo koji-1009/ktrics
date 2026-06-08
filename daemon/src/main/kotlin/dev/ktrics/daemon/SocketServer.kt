@@ -35,7 +35,7 @@ class SocketServer(
 ) : CommandRouter.DaemonControl {
     private val socketPath = DaemonEndpoint.socketPath(projectRoot)
     private val pidFile = DaemonEndpoint.pidFile(projectRoot)
-    private val router = CommandRouter(this)
+    private val router = CommandRouter(this, projectRoot)
     private val workers = Executors.newCachedThreadPool { r -> thread(start = false, isDaemon = true) { r.run() } }
     private val lastActivity = AtomicLong(System.nanoTime())
     private val activeRequests = java.util.concurrent.atomic.AtomicInteger(0)

@@ -39,7 +39,8 @@ class CommandRouterTest {
     private fun router(
         control: CommandRouter.DaemonControl,
         cli: Cli = Cli.default(),
-    ) = CommandRouter(control, cli)
+        serveRoot: File = File("/serve/root").absoluteFile.normalize(),
+    ) = CommandRouter(control, serveRoot, cli)
 
     @Test
     fun `--version reports the daemon build and protocol version`() {
@@ -138,8 +139,12 @@ class CommandRouterTest {
     }
 
     @Test
-    fun `without --root the cwd becomes the project root`() {
+    fun `without --root the daemon's serve root - not the relayed cwd - is the project root`() {
+        // The client walks up to the project's `ktrics.yaml` and spawns the daemon with that root; a
+        // command relayed from a subdirectory carries that subdir as cwd. The router must resolve the
+        // project root to the serve root, NOT the cwd, or the project's config is silently ignored.
         val sink = CapturingSink()
+        val serveRoot = File("/project/root").absoluteFile.normalize()
         val probe =
             Cli(
                 mapOf(
@@ -150,13 +155,13 @@ class CommandRouterTest {
                         },
                 ),
             )
-        router(FakeControl(), probe).dispatch(
+        router(FakeControl(), probe, serveRoot).dispatch(
             listOf("probe"),
-            cwd = "/spawn/dir",
+            cwd = "/project/root/sub/dir",
             env = emptyMap(),
             sink = sink,
         )
-        sink.stdout.toString() shouldBe File("/spawn/dir").absoluteFile.normalize().path
+        sink.stdout.toString() shouldBe serveRoot.path
     }
 
     @Test
