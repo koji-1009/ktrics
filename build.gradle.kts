@@ -54,6 +54,14 @@ subprojects {
         }
     }
 
+    // Pin the Java bytecode target to 21 (matching Kotlin's) so it stays consistent when the build runs
+    // on a newer JDK — the native/release path builds under GraalVM 25, where compileJava would
+    // otherwise default to 25 and the Kotlin plugin would fail on the Java↔Kotlin target mismatch.
+    extensions.configure<JavaPluginExtension> {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
         // Session-backed suites boot many embedded IntelliJ platforms in one test JVM; the default

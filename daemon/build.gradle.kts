@@ -1,7 +1,6 @@
 plugins {
     application
     id("org.jetbrains.kotlin.plugin.serialization")
-    alias(libs.plugins.shadow)
     alias(libs.plugins.badass.runtime)
 }
 
@@ -42,21 +41,14 @@ tasks.named<Jar>("jar") {
     }
 }
 
-// --- Self-contained image: jlink a trimmed JRE alongside the daemon jars (org.beryx.runtime). ---
-// The shipped archive must need NEITHER a system JDK NOR Gradle (the README's stated design). The
-// `runtime` task emits build/image/ with bin/ launchers, lib/*.jar, and a bundled `runtime/` JRE whose
-// launcher points at it. jlink can't cross-compile, so each target OS builds its own image in the
-// release workflow — the same constraint the GraalVM native client already lives under.
+// Self-contained jlink image (org.beryx.runtime): emits build/image/ with bin/ launchers, lib/*.jar,
+// and a bundled JRE, so the shipped archive needs no system JDK. jlink can't cross-compile — each OS
+// builds its own image in the release workflow.
 runtime {
-    // JDK 21 jlink: `--compress=zip-N` (the legacy `--compress 2` is deprecated). Strip what a runtime
-    // never needs; keep it correct over maximally small.
     options.set(listOf("--strip-debug", "--no-header-files", "--no-man-pages", "--compress", "zip-6"))
-    // The embedded IntelliJ platform + Kotlin compiler are NON-modular jars, so jdeps can't reliably
-    // derive the module set. Include the full Java SE aggregate plus the jdk.* modules the platform
-    // actually reaches for (sun.misc.Unsafe via jdk.unsupported, the zip filesystem provider, the
-    // compiler/tools + attach/debug surface). Erring broad keeps the daemon correct at a modest size
-    // cost; the native-build CI job's smoke test (ktricsd --version + a real analyze) validates the set
-    // on every target OS before a release is cut.
+    // The embedded IntelliJ platform + Kotlin compiler are non-modular, so jdeps can't derive the module
+    // set; include java.se plus the jdk.* modules the platform reaches for. The native-build CI job's
+    // smoke test validates this on every target OS.
     modules.set(
         listOf(
             "java.se",

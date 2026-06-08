@@ -185,11 +185,11 @@ Multi-module projects declare the module graph under `modules: { declared: [...]
 ```bash
 ./gradlew build                    # all modules
 ./gradlew :client:nativeCompile    # GraalVM native-image client
-./gradlew :daemon:installDist      # self-contained daemon
+./gradlew :daemon:runtime          # self-contained daemon image (bundled JRE)
 ./gradlew test                     # golden + unit tests
 ```
 
-Requires JDK 21 (GraalVM for `nativeCompile`). The Kotlin Analysis API Standalone + IntelliJ platform resolve from the JetBrains repositories (pinned in `gradle/libs.versions.toml`).
+The `build`/`test` path runs on JDK 21; `nativeCompile` and `:daemon:runtime` use GraalVM 25 (community). The Kotlin Analysis API Standalone + IntelliJ platform resolve from the JetBrains repositories (pinned in `gradle/libs.versions.toml`).
 
 ## Related projects
 
