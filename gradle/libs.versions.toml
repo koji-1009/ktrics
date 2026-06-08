@@ -23,7 +23,7 @@ graalvm = "0.10.3"               # org.graalvm.buildtools.native Gradle plugin.
 detekt = "1.23.7"
 ktlint = "12.1.1"
 shadow = "8.3.5"
-badassRuntime = "1.13.1"         # org.beryx.runtime: jlink a self-contained daemon image (bundled trimmed JRE).
+badassRuntime = "2.0.1"          # org.beryx.runtime: jlink a self-contained daemon image (bundled trimmed JRE).
 kover = "0.9.8"                  # JetBrains Kotlin-native coverage. Class-level excludes only, like JaCoCo (plan §10).
 
 [libraries]
