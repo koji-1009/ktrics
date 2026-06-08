@@ -40,16 +40,16 @@ jobs:
             exit 1
           fi
 
-      # GraalVM JDK 21: the native-image toolchain + the JDK the rest of the build needs.
+      # GraalVM JDK 25: native-image toolchain + jmods for jlink. 25's native-image locates current
+      # Visual Studio (the frozen community 21.0.2 could not find VS 2026).
       - uses: graalvm/setup-graalvm@329c42c5f4c343bceb505f0b28cc8499bc2bf174 # v1.5.4
         with:
-          java-version: '21'
+          java-version: '25'
           distribution: 'graalvm-community'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # The daemon image is a self-contained jlink build (a trimmed JRE bundled under bin/, app jars in
-      # lib/), so the archive needs NO system Java. badass-runtime (the `runtime` task) is not
-      # configuration-cache compatible, hence --no-configuration-cache.
+      # Self-contained jlink image (bundled JRE under bin/, app jars in lib/) — the archive needs no
+      # system Java. badass-runtime's `runtime` task isn't configuration-cache compatible.
       - name: Build native client + self-contained daemon image
         shell: bash
         run: ./gradlew --no-daemon --no-configuration-cache :client:nativeCompile :daemon:runtime

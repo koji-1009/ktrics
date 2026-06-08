@@ -41,11 +41,9 @@ jobs:
           path: '**/build/reports/tests/'
           if-no-files-found: ignore
 
-  # The GraalVM native client and the self-contained (jlink) daemon image are built ONLY here and in
-  # release.yml — the `verify` job never compiles them. Without this, a broken native build or an
-  # insufficient jlink module set would surface only when a release is published. Runs on main pushes
-  # and manual dispatch (NOT on every PR) to keep PR CI fast; use the "Run workflow" button for a
-  # pre-release dry-run on all three target OSes before tagging.
+  # Builds the GraalVM native client + self-contained daemon image (only here and in release.yml; the
+  # verify job never compiles them) so native-build or jlink-module breakage is caught before a release,
+  # not at publish time. Runs on main pushes and manual dispatch, not on PRs, to keep PR CI fast.
   native:
     name: native build + smoke (${{ matrix.target }})
     if: github.event_name != 'pull_request'
@@ -60,22 +58,20 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      # GraalVM JDK 21 provides both the native-image toolchain and the jmods jlink needs for the image.
+      # GraalVM JDK 25 (native-image toolchain + jmods for jlink). 25 carries a native-image that
+      # locates current Visual Studio; the frozen community 21.0.2 could not find VS 2026.
       - uses: graalvm/setup-graalvm@329c42c5f4c343bceb505f0b28cc8499bc2bf174 # v1.5.4
         with:
-          java-version: '21'
+          java-version: '25'
           distribution: 'graalvm-community'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # badass-runtime's `runtime` task is not configuration-cache compatible (the repo enables it by
-      # default), hence --no-configuration-cache.
       - name: Build native client + self-contained daemon image
         shell: bash
         run: ./gradlew --no-daemon --no-configuration-cache :client:nativeCompile :daemon:runtime
 
-      # Prove self-containment: with no system Java provisioned, the bundled daemon must boot the
-      # embedded IntelliJ platform on its OWN trimmed JRE and analyze a real file. A missing jlink module
-      # would crash here (non-zero), failing the job — exactly the breakage we want caught before release.
+      # With no system Java, the bundled daemon must boot the embedded platform on its own JRE and
+      # analyze a real file; a missing jlink module crashes here.
       - name: Smoke test (native client + self-contained daemon)
         shell: bash
         run: |
