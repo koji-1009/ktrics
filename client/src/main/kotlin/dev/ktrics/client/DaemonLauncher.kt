@@ -45,14 +45,13 @@ class DaemonLauncher(
     private val javaVersionProbe: (String) -> String? = ::probeJavaVersion,
 ) {
     /**
-     * Ensures a daemon is listening; spawns one and waits up to [timeoutMs] for the socket. When a cold
-     * spawn is needed, the system Java is verified first ([requireUsableJava]) so an absent or too-old
-     * runtime fails immediately with a clear error rather than after the full socket-wait timeout.
+     * Ensures a daemon is listening; spawns one and waits up to [timeoutMs] for the socket. Every spawn
+     * path verifies the system Java first (see [spawn]), so an absent or too-old runtime fails
+     * immediately with a clear error rather than after the full socket-wait timeout.
      */
     fun ensureRunning(timeoutMs: Long = DEFAULT_SPAWN_TIMEOUT_MS): Boolean {
         val socket = DaemonEndpoint.socketPath(projectRoot)
         if (isConnectable(socket)) return true
-        requireUsableJava()
         spawn()
         return waitForSocket(socket, timeoutMs)
     }
@@ -65,6 +64,9 @@ class DaemonLauncher(
     }
 
     private fun spawn() {
+        // Verify the runtime before forking: a missing/too-old Java must fail fast with an actionable
+        // error here, not as a silent 30s socket-wait timeout. Guards every spawn path (also `respawn`).
+        requireUsableJava()
         val command = daemonCommand() + listOf("--serve", "--root", projectRoot.absolutePath)
         val builder =
             ProcessBuilder(command)
@@ -111,12 +113,19 @@ class DaemonLauncher(
 
     /** Locates the `ktricsd` launcher: explicit env wins, else a sibling of the client binary, else PATH. */
     private fun daemonCommand(): List<String> {
-        env["KTRICS_DAEMON"]?.takeIf { it.isNotBlank() }?.let { return listOf(it) }
+        overrideCommand()?.let { return it }
         val selfDir = ProcessHandle.current().info().command().map { File(it).parentFile }.orElse(null)
         val sibling = selfDir?.let { File(it, daemonBinaryName()) }
         if (sibling != null && sibling.canExecute()) return listOf(sibling.absolutePath)
         return listOf(daemonBinaryName())
     }
+
+    /**
+     * The user-supplied launch command from `KTRICS_DAEMON`, or null when unset. Single source of truth
+     * for "the caller owns the runtime": when non-null it both drives [daemonCommand] and tells
+     * [requireUsableJava] to skip the system-Java preflight.
+     */
+    private fun overrideCommand(): List<String>? = env["KTRICS_DAEMON"]?.takeIf { it.isNotBlank() }?.let { listOf(it) }
 
     private fun daemonBinaryName(): String = if (isWindows()) "ktricsd.bat" else "ktricsd"
 
@@ -127,10 +136,12 @@ class DaemonLauncher(
      * KTRICS_DAEMON overrides the launch command — the user owns the runtime in that case.
      */
     private fun requireUsableJava() {
-        if (!env["KTRICS_DAEMON"].isNullOrBlank()) return
+        if (overrideCommand() != null) return
         val javaExe = resolveJavaExecutable()
-        val banner = javaExe?.let { javaVersionProbe(it) }
-        if (javaExe == null || banner == null) {
+        // banner == null covers both "no java resolved" and "java couldn't be run" — javaExe is non-null
+        // past this guard, so it can be named in the version error below.
+        val banner = javaExe?.let(javaVersionProbe)
+        if (banner == null) {
             throw DaemonStartException(
                 "ktrics: no Java runtime found to start the analysis daemon (ktricsd). ktrics needs a " +
                     "JDK $MIN_JAVA_MAJOR or newer — install one and set JAVA_HOME, or put `java` on your PATH.",
@@ -147,9 +158,11 @@ class DaemonLauncher(
     }
 
     /**
-     * The `java` the generated start script will use: `$JAVA_HOME/bin/java` when JAVA_HOME is set (null
-     * when that path isn't executable — the script hard-fails there too, never falling back to PATH),
-     * else the bare `java`, left for the OS to resolve against PATH at probe time.
+     * Best-effort resolution of the `java` the generated start script will run: `$JAVA_HOME/bin/java`
+     * when JAVA_HOME is set (null when that path isn't executable — the script hard-fails there too,
+     * never falling back to PATH), else the bare `java` for the OS to resolve against PATH. This mirrors
+     * the script's dominant branch only; exotic layouts it also tries (e.g. AIX `jre/sh/java`) are not
+     * modeled — the preflight just needs to answer "is a usable Java reachable the way the script looks?".
      */
     private fun resolveJavaExecutable(): String? {
         val exe = if (isWindows()) "java.exe" else "java"
@@ -200,6 +213,9 @@ class DaemonLauncher(
         /** Bounded wait for `java -version`; a hung probe must never stall daemon startup. */
         private const val JAVA_PROBE_TIMEOUT_MS: Long = 5_000
 
+        /** The `version "X.Y.Z"` token in a `java -version` banner; compiled once, not per call. */
+        private val VERSION_BANNER = Regex("version \"([^\"]+)\"")
+
         /** Runs `java -version` (the banner goes to stderr) and returns its output, or null if it can't run. */
         private fun probeJavaVersion(javaExe: String): String? =
             try {
@@ -220,7 +236,7 @@ class DaemonLauncher(
          * the banner carries no `version "..."` token or its leading component isn't numeric.
          */
         internal fun parseJavaMajor(banner: String): Int? {
-            val raw = Regex("version \"([^\"]+)\"").find(banner)?.groupValues?.get(1) ?: return null
+            val raw = VERSION_BANNER.find(banner)?.groupValues?.get(1) ?: return null
             val parts = raw.split('.', '_', '-', '+')
             val first = parts.getOrNull(0)?.toIntOrNull() ?: return null
             return if (first == 1) parts.getOrNull(1)?.toIntOrNull() else first

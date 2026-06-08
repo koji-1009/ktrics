@@ -103,40 +103,31 @@ class DaemonLauncherTest {
     }
 
     @Test
-    fun `ensureRunning fails fast with an actionable error when no Java runtime can be run`() {
-        withProject { root ->
-            val spawns = AtomicInteger(0)
-            // No JAVA_HOME (→ bare `java`) and a probe that reports it as unrunnable: the daemon has no JVM
-            // to run on, so the spawn is refused up front rather than left to time out on a missing socket.
-            val launcher =
-                DaemonLauncher(
-                    root,
-                    startProcess = { spawns.incrementAndGet() },
-                    env = emptyMap(),
-                    javaVersionProbe = { null },
-                )
-            val ex = shouldThrow<DaemonStartException> { launcher.ensureRunning(timeoutMs = 1_000) }
-            ex.message!!.contains("JDK 21") shouldBe true
-            spawns.get() shouldBe 0
-        }
-    }
+    fun `ensureRunning fails fast with an actionable error when no Java runtime can be run`() =
+        // No JAVA_HOME (→ bare `java`) + a probe that reports it unrunnable: no JVM to run on, so the
+        // spawn is refused up front rather than left to time out on a socket that never binds.
+        assertPreflightRejects({ null }, "JDK 21")
 
     @Test
-    fun `ensureRunning fails fast when the system Java is older than 21`() {
-        withProject { root ->
-            val spawns = AtomicInteger(0)
-            val launcher =
-                DaemonLauncher(
-                    root,
-                    startProcess = { spawns.incrementAndGet() },
-                    env = emptyMap(),
-                    javaVersionProbe = { "openjdk version \"17.0.10\" 2024-01-16" },
-                )
-            val ex = shouldThrow<DaemonStartException> { launcher.ensureRunning(timeoutMs = 1_000) }
-            ex.message!!.contains("Java 21") shouldBe true
-            ex.message!!.contains("17") shouldBe true
-            spawns.get() shouldBe 0
-        }
+    fun `ensureRunning fails fast when the system Java is older than 21`() =
+        assertPreflightRejects({ "openjdk version \"17.0.10\" 2024-01-16" }, "Java 21", "17")
+
+    /** The cold-spawn Java preflight must reject [probe]'s runtime with a message naming all [fragments], and never spawn. */
+    private fun assertPreflightRejects(
+        probe: (String) -> String?,
+        vararg fragments: String,
+    ) = withProject { root ->
+        val spawns = AtomicInteger(0)
+        val launcher =
+            DaemonLauncher(
+                root,
+                startProcess = { spawns.incrementAndGet() },
+                env = emptyMap(),
+                javaVersionProbe = probe,
+            )
+        val ex = shouldThrow<DaemonStartException> { launcher.ensureRunning(timeoutMs = 1_000) }
+        fragments.forEach { ex.message!!.contains(it) shouldBe true }
+        spawns.get() shouldBe 0
     }
 
     @Test
@@ -235,7 +226,12 @@ class DaemonLauncherTest {
             DaemonEndpoint.pidFile(root).writeText("999999999")
             var server: AutoCloseable? = null
             try {
-                val launcher = DaemonLauncher(root, startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) })
+                val launcher =
+                    DaemonLauncher(
+                        root,
+                        startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) },
+                        javaVersionProbe = okJavaProbe,
+                    )
                 launcher.respawn(timeoutMs = 2_000) shouldBe true
             } finally {
                 server?.close()
@@ -250,7 +246,12 @@ class DaemonLauncherTest {
             try {
                 // No timeout arg → the DEFAULT_SPAWN_TIMEOUT_MS default; the injected spawn binds the socket
                 // immediately, so it returns true on the first poll rather than waiting out the default.
-                val launcher = DaemonLauncher(root, startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) })
+                val launcher =
+                    DaemonLauncher(
+                        root,
+                        startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) },
+                        javaVersionProbe = okJavaProbe,
+                    )
                 launcher.respawn() shouldBe true
             } finally {
                 server?.close()
@@ -273,6 +274,7 @@ class DaemonLauncherTest {
                             root,
                             startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) },
                             isDaemonProcess = { true },
+                            javaVersionProbe = okJavaProbe,
                         )
                     launcher.respawn(timeoutMs = 2_000) shouldBe true
                     victim.waitFor(2, TimeUnit.SECONDS)
@@ -297,7 +299,12 @@ class DaemonLauncherTest {
                 var server: AutoCloseable? = null
                 try {
                     // Default seam = the real looksLikeDaemon check; `sleep` is recognizably NOT ktricsd.
-                    val launcher = DaemonLauncher(root, startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) })
+                    val launcher =
+                        DaemonLauncher(
+                            root,
+                            startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) },
+                            javaVersionProbe = okJavaProbe,
+                        )
                     launcher.respawn(timeoutMs = 2_000) shouldBe true
                     bystander.isAlive shouldBe true // untouched
                 } finally {
@@ -330,6 +337,7 @@ class DaemonLauncherTest {
                             root,
                             startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) },
                             isDaemonProcess = { true },
+                            javaVersionProbe = okJavaProbe,
                         )
                     val elapsed = kotlin.system.measureTimeMillis { launcher.respawn(timeoutMs = 3_000) shouldBe true }
                     // The grace window must actually elapse before the forcible kill — proof the escalation
@@ -364,6 +372,7 @@ class DaemonLauncherTest {
                             root,
                             startProcess = { server = TestUnixServer.start(DaemonEndpoint.socketPath(root)) },
                             isDaemonProcess = { true },
+                            javaVersionProbe = okJavaProbe,
                         )
                     // Pre-set the interrupt flag so the first awaitExit get() throws InterruptedException at once;
                     // the throw clears the flag, so the post-escalation wait and spawn complete normally.
