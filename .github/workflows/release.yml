@@ -20,10 +20,13 @@ jobs:
       fail-fast: false
       matrix:
         # native-image can't cross-compile, so the client is built on each target OS.
+        # Windows is pinned to windows-2022 (VS 2022): GraalVM CE 21.0.2 — the last community 21 build —
+        # can't locate Visual Studio 2026, which `windows-latest` now maps to, and native-image fails
+        # with "Failed to find 'vcvarsall.bat'". Revisit when GraalVM is upgraded past a VS-2026-aware build.
         include:
-          - { os: ubuntu-latest,  target: linux-x64,   archive: tar }
-          - { os: macos-latest,   target: macos-arm64, archive: tar }
-          - { os: windows-latest, target: windows-x64, archive: zip }
+          - { os: ubuntu-latest, target: linux-x64,   archive: tar }
+          - { os: macos-latest,  target: macos-arm64, archive: tar }
+          - { os: windows-2022,  target: windows-x64, archive: zip }
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 

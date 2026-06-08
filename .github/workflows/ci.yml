@@ -53,10 +53,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Windows is pinned to windows-2022 (VS 2022): GraalVM CE 21.0.2 can't locate Visual Studio 2026
+        # (what `windows-latest` now maps to), so native-image fails with "Failed to find 'vcvarsall.bat'".
+        # Keep this in lockstep with release.yml; revisit when GraalVM is upgraded past a VS-2026-aware build.
         include:
-          - { os: ubuntu-latest,  target: linux-x64,   exe: "",     ktricsd: ktricsd }
-          - { os: macos-latest,   target: macos-arm64, exe: "",     ktricsd: ktricsd }
-          - { os: windows-latest, target: windows-x64, exe: ".exe", ktricsd: ktricsd.bat }
+          - { os: ubuntu-latest, target: linux-x64,   exe: "",     ktricsd: ktricsd }
+          - { os: macos-latest,  target: macos-arm64, exe: "",     ktricsd: ktricsd }
+          - { os: windows-2022,  target: windows-x64, exe: ".exe", ktricsd: ktricsd.bat }
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
