@@ -138,13 +138,22 @@ class DaemonLauncher(
     private fun requireUsableJava() {
         if (overrideCommand() != null) return
         val javaExe = resolveJavaExecutable()
-        // banner == null covers both "no java resolved" and "java couldn't be run" — javaExe is non-null
+        // banner == null covers both "no java resolved" and "java couldn't be run"; javaExe stays non-null
         // past this guard, so it can be named in the version error below.
         val banner = javaExe?.let(javaVersionProbe)
         if (banner == null) {
+            // Point the user at the actual cause: a set-but-broken JAVA_HOME needs different advice than
+            // an unset one with nothing usable on PATH.
+            val javaHome = env["JAVA_HOME"]?.takeIf { it.isNotBlank() }
+            val cause =
+                if (javaHome != null) {
+                    "JAVA_HOME ($javaHome) has no runnable `bin/java`"
+                } else {
+                    "no `java` was found on your PATH and JAVA_HOME is unset"
+                }
             throw DaemonStartException(
-                "ktrics: no Java runtime found to start the analysis daemon (ktricsd). ktrics needs a " +
-                    "JDK $MIN_JAVA_MAJOR or newer — install one and set JAVA_HOME, or put `java` on your PATH.",
+                "ktrics: $cause, so the analysis daemon (ktricsd) cannot start. " +
+                    "ktrics needs a JDK $MIN_JAVA_MAJOR or newer.",
             )
         }
         val major = parseJavaMajor(banner)
@@ -216,16 +225,25 @@ class DaemonLauncher(
         /** The `version "X.Y.Z"` token in a `java -version` banner; compiled once, not per call. */
         private val VERSION_BANNER = Regex("version \"([^\"]+)\"")
 
-        /** Runs `java -version` (the banner goes to stderr) and returns its output, or null if it can't run. */
+        /**
+         * Runs `java -version` (the banner goes to the merged stderr) and returns its output, or null if
+         * it can't run / exits non-zero / outlives the probe budget. The timeout bounds the WAIT, so it
+         * is checked before draining the stream: `-version` output is tiny (well under the pipe buffer),
+         * so the process exits without blocking on a full pipe, and reading after exit can't hang. Were
+         * the read done first it could block forever on a `java` that emits a banner then holds stdout
+         * open — the timeout would never get a chance to fire.
+         */
         private fun probeJavaVersion(javaExe: String): String? =
             try {
                 val proc = ProcessBuilder(javaExe, "-version").redirectErrorStream(true).start()
-                val output = proc.inputStream.bufferedReader().use { it.readText() }
-                if (proc.waitFor(JAVA_PROBE_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) && proc.exitValue() == 0) {
-                    output
-                } else {
+                proc.outputStream.close() // it reads no stdin; closing avoids a stuck pipe on either side
+                if (!proc.waitFor(JAVA_PROBE_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
                     proc.destroyForcibly()
                     null
+                } else if (proc.exitValue() != 0) {
+                    null
+                } else {
+                    proc.inputStream.bufferedReader().use { it.readText() }
                 }
             } catch (_: Exception) {
                 null

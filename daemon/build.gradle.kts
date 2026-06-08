@@ -44,7 +44,11 @@ tasks.named<Jar>("jar") {
 
 // `installDist` emits build/install/ktricsd/ with bin/ launcher scripts + lib/*.jar and no bundled JRE.
 // The generated start script resolves `java` from JAVA_HOME (else PATH) at run time, so the shipped
-// archive needs a system JDK 21+ — DaemonLauncher preflights exactly that before spawning. The embedded
-// IntelliJ platform + Kotlin compiler are non-modular; a standard full JDK carries every module they
-// reach for (java.se, jdk.compiler/unsupported/zipfs/attach/jdi/crypto.ec), validated by the native CI
-// job's smoke test on each target OS.
+// archive needs a system JDK 21+ — DaemonLauncher preflights the version before spawning.
+//
+// It must be a full JDK, not a JRE: the embedded Kotlin compiler reaches for jdk.compiler (javax.tools /
+// com.sun.source) and jdk.unsupported (sun.misc.Unsafe), which a JRE-class runtime omits. The version
+// preflight can't detect JDK-ness, so a JRE 21 would pass it and then fail at analysis time — hence the
+// README is explicit about "JDK". jlink used to enforce this module set at build time; that guarantee is
+// now the user's responsibility. The native CI smoke test runs a real `analyze` on each OS, but only on a
+// full GraalVM JDK, so it proves "boots on a full JDK", not "is sufficient on a trimmed runtime".

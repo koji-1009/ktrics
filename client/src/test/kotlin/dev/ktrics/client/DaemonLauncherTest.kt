@@ -203,7 +203,9 @@ class DaemonLauncherTest {
                 // throws when it tries to exec it — exercising the probe's catch arm.
                 File(fakeHome, "bin/java").mkdirs()
                 val launcher = DaemonLauncher(root, env = mapOf("JAVA_HOME" to fakeHome.absolutePath))
-                shouldThrow<DaemonStartException> { launcher.ensureRunning(timeoutMs = 500) }
+                val ex = shouldThrow<DaemonStartException> { launcher.ensureRunning(timeoutMs = 500) }
+                // The message must name JAVA_HOME (the set-but-broken branch), not the unset-PATH branch.
+                ex.message!!.contains("JAVA_HOME") shouldBe true
             } finally {
                 fakeHome.deleteRecursively()
             }
