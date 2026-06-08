@@ -2,6 +2,7 @@ plugins {
     application
     id("org.jetbrains.kotlin.plugin.serialization")
     alias(libs.plugins.shadow)
+    alias(libs.plugins.badass.runtime)
 }
 
 // ktricsd: the warm JVM. Embeds the K2/IntelliJ platform via :engine, holds the
@@ -39,4 +40,33 @@ tasks.named<Jar>("jar") {
         // The client/daemon version handshake uses this: mismatch triggers daemon restart.
         attributes["Ktrics-Protocol-Version"] = "1"
     }
+}
+
+// --- Self-contained image: jlink a trimmed JRE alongside the daemon jars (org.beryx.runtime). ---
+// The shipped archive must need NEITHER a system JDK NOR Gradle (the README's stated design). The
+// `runtime` task emits build/image/ with bin/ launchers, lib/*.jar, and a bundled `runtime/` JRE whose
+// launcher points at it. jlink can't cross-compile, so each target OS builds its own image in the
+// release workflow — the same constraint the GraalVM native client already lives under.
+runtime {
+    // JDK 21 jlink: `--compress=zip-N` (the legacy `--compress 2` is deprecated). Strip what a runtime
+    // never needs; keep it correct over maximally small.
+    options.set(listOf("--strip-debug", "--no-header-files", "--no-man-pages", "--compress", "zip-6"))
+    // The embedded IntelliJ platform + Kotlin compiler are NON-modular jars, so jdeps can't reliably
+    // derive the module set. Include the full Java SE aggregate plus the jdk.* modules the platform
+    // actually reaches for (sun.misc.Unsafe via jdk.unsupported, the zip filesystem provider, the
+    // compiler/tools + attach/debug surface). Erring broad keeps the daemon correct at a modest size
+    // cost; the native-build CI job's smoke test (ktricsd --version + a real analyze) validates the set
+    // on every target OS before a release is cut.
+    modules.set(
+        listOf(
+            "java.se",
+            "jdk.unsupported",
+            "jdk.zipfs",
+            "jdk.compiler",
+            "jdk.management",
+            "jdk.attach",
+            "jdk.jdi",
+            "jdk.crypto.ec",
+        ),
+    )
 }

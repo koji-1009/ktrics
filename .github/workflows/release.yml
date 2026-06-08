@@ -47,12 +47,15 @@ jobs:
           distribution: 'graalvm-community'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build native client + daemon distribution
+      # The daemon image is a self-contained jlink build (a trimmed JRE bundled under bin/, app jars in
+      # lib/), so the archive needs NO system Java. badass-runtime (the `runtime` task) is not
+      # configuration-cache compatible, hence --no-configuration-cache.
+      - name: Build native client + self-contained daemon image
         shell: bash
-        run: ./gradlew --no-daemon :client:nativeCompile :daemon:installDist
+        run: ./gradlew --no-daemon --no-configuration-cache :client:nativeCompile :daemon:runtime
 
-      # Drop the native `ktrics` into the daemon dist's bin/ so DaemonLauncher finds `ktricsd` as a
-      # sibling (lib/ stays next to bin/), then archive and attach it to the release.
+      # Drop the native `ktrics` into the daemon image's bin/ so DaemonLauncher finds `ktricsd` as a
+      # sibling (the bundled `java` + lib/ live alongside), then archive and attach it to the release.
       - name: Package and upload
         shell: bash
         env:
@@ -61,7 +64,7 @@ jobs:
           set -euo pipefail
           tag="${{ github.event.release.tag_name }}"
           stage="ktrics-${tag#v}-${{ matrix.target }}"
-          dist="$(find daemon/build/install -mindepth 1 -maxdepth 1 -type d)"
+          dist="daemon/build/image"
           if [ "${{ matrix.archive }}" = zip ]; then
             cp client/build/native/nativeCompile/ktrics.exe "$dist/bin/"
             mv "$dist" "$stage"

@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Manual trigger for a pre-release dry-run of the native build (the `native` job below).
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -38,3 +40,46 @@ jobs:
           name: test-reports
           path: '**/build/reports/tests/'
           if-no-files-found: ignore
+
+  # The GraalVM native client and the self-contained (jlink) daemon image are built ONLY here and in
+  # release.yml — the `verify` job never compiles them. Without this, a broken native build or an
+  # insufficient jlink module set would surface only when a release is published. Runs on main pushes
+  # and manual dispatch (NOT on every PR) to keep PR CI fast; use the "Run workflow" button for a
+  # pre-release dry-run on all three target OSes before tagging.
+  native:
+    name: native build + smoke (${{ matrix.target }})
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  target: linux-x64,   exe: "",     ktricsd: ktricsd }
+          - { os: macos-latest,   target: macos-arm64, exe: "",     ktricsd: ktricsd }
+          - { os: windows-latest, target: windows-x64, exe: ".exe", ktricsd: ktricsd.bat }
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # GraalVM JDK 21 provides both the native-image toolchain and the jmods jlink needs for the image.
+      - uses: graalvm/setup-graalvm@329c42c5f4c343bceb505f0b28cc8499bc2bf174 # v1.5.4
+        with:
+          java-version: '21'
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # badass-runtime's `runtime` task is not configuration-cache compatible (the repo enables it by
+      # default), hence --no-configuration-cache.
+      - name: Build native client + self-contained daemon image
+        shell: bash
+        run: ./gradlew --no-daemon --no-configuration-cache :client:nativeCompile :daemon:runtime
+
+      # Prove self-containment: with no system Java provisioned, the bundled daemon must boot the
+      # embedded IntelliJ platform on its OWN trimmed JRE and analyze a real file. A missing jlink module
+      # would crash here (non-zero), failing the job — exactly the breakage we want caught before release.
+      - name: Smoke test (native client + self-contained daemon)
+        shell: bash
+        run: |
+          set -euo pipefail
+          "client/build/native/nativeCompile/ktrics${{ matrix.exe }}" --version
+          "daemon/build/image/bin/${{ matrix.ktricsd }}" --version
+          "daemon/build/image/bin/${{ matrix.ktricsd }}" analyze --root "$PWD/testdata/analyze"

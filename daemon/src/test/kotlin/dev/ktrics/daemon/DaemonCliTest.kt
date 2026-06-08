@@ -68,6 +68,26 @@ class DaemonCliTest {
     }
 
     @Test
+    fun `findProjectRoot walks up to the nearest ktrics-yaml ancestor`() {
+        val root = kotlin.io.path.createTempDirectory("ktrics-root").toFile()
+        try {
+            File(root, "ktrics.yaml").writeText("ktrics: {}\n")
+            val sub = File(root, "a/b/c").apply { mkdirs() }
+            // From a deep subdirectory we resolve back up to the project root holding the config.
+            DaemonCli.findProjectRoot(sub) shouldBe root.absoluteFile
+            // With no config anywhere up the tree, the starting directory itself is the root.
+            val orphan = kotlin.io.path.createTempDirectory("ktrics-orphan").toFile()
+            try {
+                DaemonCli.findProjectRoot(orphan) shouldBe orphan.absoluteFile.normalize()
+            } finally {
+                orphan.deleteRecursively()
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `a --root option after the command overrides the working directory`() {
         // `rules` ignores the root but the option still drives the root-resolution branch of runForeground.
         val (code, sink) = run("rules", "--root", File(".").absolutePath)
