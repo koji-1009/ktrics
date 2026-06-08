@@ -116,7 +116,9 @@ jobs:
     name: publish release
     runs-on: ubuntu-latest
     steps:
+      # This job has no checkout, so `gh` cannot infer the repo from a local git remote — pass it
+      # explicitly with --repo, otherwise gh aborts with "failed to run git: not a git repository".
       - name: Publish the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${{ github.ref_name }}" --draft=false
+        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false
