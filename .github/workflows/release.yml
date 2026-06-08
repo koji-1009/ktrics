@@ -1,19 +1,63 @@
 name: release
 
-# When a GitHub Release is published, build the per-OS CLI archives and attach them to it.
+# When a version tag is pushed, build the per-OS CLI archives, attach them to a *draft* release,
+# then publish it. Assets must be attached before publishing: immutable releases lock a release and
+# its assets the moment it is published, so a draft is the only window in which uploads are allowed.
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.event.release.tag_name }}
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
+  # Create (or reuse) the draft the build jobs upload into. Fail fast here — before any binary is
+  # built — if the tag and the version the binaries self-report would disagree, or if a published
+  # release already owns this tag (its assets are immutable and can no longer be attached to).
+  prepare:
+    name: prepare draft release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # The tag is the public version; gradle.properties is what the binaries self-report. Refuse to
+      # ship a release whose archive name and `ktrics --version` would disagree.
+      - name: Verify the release tag matches ktrics.version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          prop="$(sed -n 's/^ktrics\.version=//p' gradle.properties | tr -d '[:space:]')"
+          if [ "${tag#v}" != "$prop" ]; then
+            echo "::error::release tag '$tag' does not match gradle.properties ktrics.version '$prop'"
+            exit 1
+          fi
+
+      # Reuse a hand-written draft if one already exists (lets a maintainer author release notes in
+      # the UI first); otherwise create one with auto-generated notes. A *published* tag is fatal —
+      # immutable releases reject any further asset uploads.
+      - name: Create or reuse the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          if gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null | grep -qx true; then
+            echo "Reusing existing draft release $tag"
+          elif gh release view "$tag" >/dev/null 2>&1; then
+            echo "::error::release '$tag' already exists and is published; its assets are immutable and cannot be attached to. Delete it and re-push the tag."
+            exit 1
+          else
+            gh release create "$tag" --draft --title "$tag" --generate-notes
+          fi
+
   build:
+    needs: prepare
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -26,19 +70,6 @@ jobs:
           - { os: windows-latest, target: windows-x64, archive: zip }
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      # The tag is the public version; gradle.properties is what the binaries self-report. Refuse to
-      # ship a release whose archive name and `ktrics --version` would disagree.
-      - name: Verify the release tag matches ktrics.version
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${{ github.event.release.tag_name }}"
-          prop="$(sed -n 's/^ktrics\.version=//p' gradle.properties | tr -d '[:space:]')"
-          if [ "${tag#v}" != "$prop" ]; then
-            echo "::error::release tag '$tag' does not match gradle.properties ktrics.version '$prop'"
-            exit 1
-          fi
 
       # GraalVM JDK 25: native-image toolchain + jmods for jlink. 25's native-image locates current
       # Visual Studio (the frozen community 21.0.2 could not find VS 2026).
@@ -55,14 +86,14 @@ jobs:
         run: ./gradlew --no-daemon --no-configuration-cache :client:nativeCompile :daemon:runtime
 
       # Drop the native `ktrics` into the daemon image's bin/ so DaemonLauncher finds `ktricsd` as a
-      # sibling (the bundled `java` + lib/ live alongside), then archive and attach it to the release.
+      # sibling (the bundled `java` + lib/ live alongside), then archive and attach it to the draft.
       - name: Package and upload
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          tag="${{ github.event.release.tag_name }}"
+          tag="${{ github.ref_name }}"
           stage="ktrics-${tag#v}-${{ matrix.target }}"
           dist="daemon/build/image"
           if [ "${{ matrix.archive }}" = zip ]; then
@@ -77,3 +108,15 @@ jobs:
             asset="$stage.tar.gz"
           fi
           gh release upload "$tag" "$asset" --clobber
+
+  # Every archive is attached: flip the draft to published. This is the point of no return — the
+  # release and its assets become immutable. Downstream workflows can subscribe to release.published.
+  publish:
+    needs: build
+    name: publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false
