@@ -9,6 +9,6 @@ package dev.ktrics.client
  * the build passes the resolved version into the test JVM and drift fails CI.
  */
 object KtricsVersion {
-    const val VERSION: String = "0.0.2"
+    const val VERSION: String = "0.0.3"
     const val NAME: String = "ktrics"
 }
