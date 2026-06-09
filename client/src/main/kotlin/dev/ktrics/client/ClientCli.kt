@@ -41,11 +41,17 @@ internal object ClientCli {
         launcher: DaemonLauncher = DaemonLauncher(projectRoot),
         client: DaemonClient = DaemonClient(DaemonEndpoint.socketPath(projectRoot)),
     ): Int =
-        relay(
-            ensureRunning = launcher::ensureRunning,
-            respawn = launcher::respawn,
-            relayOnce = { client.relay(request) },
-        )
+        try {
+            relay(
+                ensureRunning = launcher::ensureRunning,
+                respawn = launcher::respawn,
+                relayOnce = { client.relay(request) },
+            )
+        } catch (e: DaemonStartException) {
+            // The daemon's runtime prerequisite (system Java 21+) is unmet; the message is actionable.
+            System.err.println(e.message)
+            ExitCode.INTERNAL.code
+        }
 
     /**
      * Ensures the daemon is up, relays once, and retries exactly once after a version-mismatch respawn.

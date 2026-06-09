@@ -170,6 +170,21 @@ class ClientCliTest {
         }
     }
 
+    @Test
+    fun `run reports an actionable error and exits INTERNAL when the daemon runtime is unusable`() {
+        val root = createTempDirectory("nojava").toFile()
+        try {
+            // No socket up + a preflight that finds no usable Java → ensureRunning throws
+            // DaemonStartException; run must catch it and exit INTERNAL rather than let it propagate.
+            val launcher = DaemonLauncher(root, env = emptyMap(), javaVersionProbe = { null })
+            val client = DaemonClient(DaemonEndpoint.socketPath(root))
+            ClientCli.run(root, request, launcher = launcher, client = client) shouldBe ExitCode.INTERNAL.code
+        } finally {
+            runCatching { DaemonEndpoint.socketPath(root).delete() }
+            root.deleteRecursively()
+        }
+    }
+
     // --- pure helpers ---
 
     @Test

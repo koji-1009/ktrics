@@ -1,12 +1,13 @@
 plugins {
     application
     id("org.jetbrains.kotlin.plugin.serialization")
-    alias(libs.plugins.badass.runtime)
 }
 
 // ktricsd: the warm JVM. Embeds the K2/IntelliJ platform via :engine, holds the
-// module-aware cross-file index + snapshot in memory, serves the socket. Shipped as a jlink/jpackage
-// self-contained image (trimmed JRE bundled) so the caller needs neither a JDK nor Gradle.
+// module-aware cross-file index + snapshot in memory, serves the socket. Shipped via `installDist` as
+// an image of launcher scripts (bin/) + app jars (lib/) with NO bundled JRE — it runs on the caller's
+// system Java 21+ (the daemon bytecode is Java 21). The client preflights that runtime and surfaces a
+// clear error when it is missing or older, so the dependency is explicit rather than a silent failure.
 //
 // Depends on :client only for the shared wire-protocol DTOs (platform-free) — never the reverse.
 dependencies {
@@ -41,24 +42,13 @@ tasks.named<Jar>("jar") {
     }
 }
 
-// Self-contained jlink image (org.beryx.runtime): emits build/image/ with bin/ launchers, lib/*.jar,
-// and a bundled JRE, so the shipped archive needs no system JDK. jlink can't cross-compile — each OS
-// builds its own image in the release workflow.
-runtime {
-    options.set(listOf("--strip-debug", "--no-header-files", "--no-man-pages", "--compress", "zip-6"))
-    // The embedded IntelliJ platform + Kotlin compiler are non-modular, so jdeps can't derive the module
-    // set; include java.se plus the jdk.* modules the platform reaches for. The native-build CI job's
-    // smoke test validates this on every target OS.
-    modules.set(
-        listOf(
-            "java.se",
-            "jdk.unsupported",
-            "jdk.zipfs",
-            "jdk.compiler",
-            "jdk.management",
-            "jdk.attach",
-            "jdk.jdi",
-            "jdk.crypto.ec",
-        ),
-    )
-}
+// `installDist` emits build/install/ktricsd/ with bin/ launcher scripts + lib/*.jar and no bundled JRE.
+// The generated start script resolves `java` from JAVA_HOME (else PATH) at run time, so the shipped
+// archive needs a system JDK 21+ — DaemonLauncher preflights the version before spawning.
+//
+// It must be a full JDK, not a JRE: the embedded Kotlin compiler reaches for jdk.compiler (javax.tools /
+// com.sun.source) and jdk.unsupported (sun.misc.Unsafe), which a JRE-class runtime omits. The version
+// preflight can't detect JDK-ness, so a JRE 21 would pass it and then fail at analysis time — hence the
+// README is explicit about "JDK". jlink used to enforce this module set at build time; that guarantee is
+// now the user's responsibility. The native CI smoke test runs a real `analyze` on each OS, but only on a
+// full GraalVM JDK, so it proves "boots on a full JDK", not "is sufficient on a trimmed runtime".

@@ -44,7 +44,7 @@ The native client links none of the analysis platform, so it starts in milliseco
 
 ## Install
 
-Download the archive for your platform from [GitHub Releases](https://github.com/koji-1009/ktrics/releases) — `linux-x64` / `macos-arm64` (`.tar.gz`) or `windows-x64` (`.zip`) — extract it, and put its `bin/` on your `PATH`. Each archive is **self-contained — no system Java required**: it bundles the native `ktrics` client, the `ktricsd` daemon, and a trimmed Java runtime (jlink) the daemon runs on. The client locates the daemon as a sibling and the daemon runs on the bundled runtime, so keep the extracted layout intact.
+Download the archive for your platform from [GitHub Releases](https://github.com/koji-1009/ktrics/releases) — `linux-x64` / `macos-arm64` (`.tar.gz`) or `windows-x64` (`.zip`) — extract it, and put its `bin/` on your `PATH`. The archive bundles the native `ktrics` client and the `ktricsd` daemon; the client locates the daemon as a sibling, so keep the extracted layout intact. The daemon runs on **your system Java — a JDK 21 or newer is required** (resolved via `JAVA_HOME`, else `java` on `PATH`; recent Android Studio / JetBrains Runtime and Temurin 21+ all qualify). If no suitable Java is found, `ktrics` exits with a clear message instead of hanging.
 
 Or build from source (JDK 21 + GraalVM for the native client — see [Development](#development)).
 
@@ -185,11 +185,11 @@ Multi-module projects declare the module graph under `modules: { declared: [...]
 ```bash
 ./gradlew build                    # all modules
 ./gradlew :client:nativeCompile    # GraalVM native-image client
-./gradlew :daemon:runtime          # self-contained daemon image (bundled JRE)
+./gradlew :daemon:installDist      # daemon image (bin/ scripts + lib/ jars; runs on system Java 21+)
 ./gradlew test                     # golden + unit tests
 ```
 
-The `build`/`test` path runs on JDK 21; `nativeCompile` and `:daemon:runtime` use GraalVM 25 (community). The Kotlin Analysis API Standalone + IntelliJ platform resolve from the JetBrains repositories (pinned in `gradle/libs.versions.toml`).
+The `build`/`test` path runs on JDK 21; `nativeCompile` uses GraalVM 25 (community), while `:daemon:installDist` needs only a JDK 21+. The Kotlin Analysis API Standalone + IntelliJ platform resolve from the JetBrains repositories (pinned in `gradle/libs.versions.toml`).
 
 ## Related projects
 

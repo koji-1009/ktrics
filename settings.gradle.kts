@@ -22,7 +22,7 @@ dependencyResolutionManagement {
     }
 }
 
-// --- Modules: One Kotlin codebase, two output artifacts (client native-image, daemon jlink). ---
+// --- Modules: One Kotlin codebase, two output artifacts (client native-image, daemon installDist). ---
 include(
     // GraalVM native-image entry; argv/cwd relay; links NONE of the platform.
     ":client",

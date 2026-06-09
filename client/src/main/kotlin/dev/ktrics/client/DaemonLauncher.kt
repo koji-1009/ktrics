@@ -7,9 +7,18 @@ import java.net.UnixDomainSocketAddress
 import java.nio.channels.SocketChannel
 
 /**
+ * Thrown when the daemon's runtime prerequisite — a usable system Java [DaemonLauncher.MIN_JAVA_MAJOR]+
+ * — can't be satisfied, so spawning would only fail silently. Carries a user-facing, actionable message.
+ */
+class DaemonStartException(
+    message: String,
+) : Exception(message)
+
+/**
  * Auto-spawns `ktricsd` and waits for its socket (daemon auto-spawns on first client call,
  * self-terminates on idle timeout). The native client cannot run analysis itself — it links none
- * of the platform — so every analysis path goes through a spawned daemon.
+ * of the platform — so every analysis path goes through a spawned daemon, which runs on the caller's
+ * system Java (no JRE is bundled): a missing or too-old runtime is caught up front, not as a timeout.
  */
 class DaemonLauncher(
     private val projectRoot: File,
@@ -24,8 +33,22 @@ class DaemonLauncher(
      * are `sleep`/`sh`, which the production check would — correctly — refuse to kill).
      */
     private val isDaemonProcess: (ProcessHandle) -> Boolean = ::looksLikeDaemon,
+    /**
+     * Environment the daemon runtime is resolved from (JAVA_HOME / KTRICS_DAEMON). Injected so the Java
+     * preflight runs deterministically in tests; production reads the real process environment.
+     */
+    private val env: Map<String, String> = System.getenv(),
+    /**
+     * Probes a resolved `java` executable for its `-version` banner (null when it can't be run). DI
+     * seam: tests substitute a fixed banner instead of forking a real JVM.
+     */
+    private val javaVersionProbe: (String) -> String? = ::probeJavaVersion,
 ) {
-    /** Ensures a daemon is listening; spawns one and waits up to [timeoutMs] for the socket. */
+    /**
+     * Ensures a daemon is listening; spawns one and waits up to [timeoutMs] for the socket. Every spawn
+     * path verifies the system Java first (see [spawn]), so an absent or too-old runtime fails
+     * immediately with a clear error rather than after the full socket-wait timeout.
+     */
     fun ensureRunning(timeoutMs: Long = DEFAULT_SPAWN_TIMEOUT_MS): Boolean {
         val socket = DaemonEndpoint.socketPath(projectRoot)
         if (isConnectable(socket)) return true
@@ -41,6 +64,9 @@ class DaemonLauncher(
     }
 
     private fun spawn() {
+        // Verify the runtime before forking: a missing/too-old Java must fail fast with an actionable
+        // error here, not as a silent 30s socket-wait timeout. Guards every spawn path (also `respawn`).
+        requireUsableJava()
         val command = daemonCommand() + listOf("--serve", "--root", projectRoot.absolutePath)
         val builder =
             ProcessBuilder(command)
@@ -87,14 +113,74 @@ class DaemonLauncher(
 
     /** Locates the `ktricsd` launcher: explicit env wins, else a sibling of the client binary, else PATH. */
     private fun daemonCommand(): List<String> {
-        System.getenv("KTRICS_DAEMON")?.takeIf { it.isNotBlank() }?.let { return listOf(it) }
+        overrideCommand()?.let { return it }
         val selfDir = ProcessHandle.current().info().command().map { File(it).parentFile }.orElse(null)
         val sibling = selfDir?.let { File(it, daemonBinaryName()) }
         if (sibling != null && sibling.canExecute()) return listOf(sibling.absolutePath)
         return listOf(daemonBinaryName())
     }
 
-    private fun daemonBinaryName(): String = if (System.getProperty("os.name").startsWith("Windows")) "ktricsd.bat" else "ktricsd"
+    /**
+     * The user-supplied launch command from `KTRICS_DAEMON`, or null when unset. Single source of truth
+     * for "the caller owns the runtime": when non-null it both drives [daemonCommand] and tells
+     * [requireUsableJava] to skip the system-Java preflight.
+     */
+    private fun overrideCommand(): List<String>? = env["KTRICS_DAEMON"]?.takeIf { it.isNotBlank() }?.let { listOf(it) }
+
+    private fun daemonBinaryName(): String = if (isWindows()) "ktricsd.bat" else "ktricsd"
+
+    /**
+     * Fails fast before a doomed spawn (which would otherwise just time out waiting for a socket that
+     * never binds) when the daemon's runtime is absent or too old. The daemon is Java 21 bytecode and
+     * runs on the *caller's* JVM, so a usable Java [MIN_JAVA_MAJOR]+ must be resolvable. Skipped when
+     * KTRICS_DAEMON overrides the launch command — the user owns the runtime in that case.
+     */
+    private fun requireUsableJava() {
+        if (overrideCommand() != null) return
+        val javaExe = resolveJavaExecutable()
+        // banner == null covers both "no java resolved" and "java couldn't be run"; javaExe stays non-null
+        // past this guard, so it can be named in the version error below.
+        val banner = javaExe?.let(javaVersionProbe)
+        if (banner == null) {
+            // Point the user at the actual cause: a set-but-broken JAVA_HOME needs different advice than
+            // an unset one with nothing usable on PATH.
+            val javaHome = env["JAVA_HOME"]?.takeIf { it.isNotBlank() }
+            val cause =
+                if (javaHome != null) {
+                    "JAVA_HOME ($javaHome) has no runnable `bin/java`"
+                } else {
+                    "no `java` was found on your PATH and JAVA_HOME is unset"
+                }
+            throw DaemonStartException(
+                "ktrics: $cause, so the analysis daemon (ktricsd) cannot start. " +
+                    "ktrics needs a JDK $MIN_JAVA_MAJOR or newer.",
+            )
+        }
+        val major = parseJavaMajor(banner)
+        if (major == null || major < MIN_JAVA_MAJOR) {
+            val found = major?.let { "Java $it" } ?: "an unrecognized Java version"
+            throw DaemonStartException(
+                "ktrics: the analysis daemon (ktricsd) needs Java $MIN_JAVA_MAJOR or newer, but `$javaExe` " +
+                    "reports $found. Point JAVA_HOME at a JDK $MIN_JAVA_MAJOR+.",
+            )
+        }
+    }
+
+    /**
+     * Best-effort resolution of the `java` the generated start script will run: `$JAVA_HOME/bin/java`
+     * when JAVA_HOME is set (null when that path isn't executable — the script hard-fails there too,
+     * never falling back to PATH), else the bare `java` for the OS to resolve against PATH. This mirrors
+     * the script's dominant branch only; exotic layouts it also tries (e.g. AIX `jre/sh/java`) are not
+     * modeled — the preflight just needs to answer "is a usable Java reachable the way the script looks?".
+     */
+    private fun resolveJavaExecutable(): String? {
+        val exe = if (isWindows()) "java.exe" else "java"
+        val javaHome = env["JAVA_HOME"]?.takeIf { it.isNotBlank() } ?: return exe
+        val candidate = File(File(javaHome, "bin"), exe)
+        return candidate.absolutePath.takeIf { candidate.canExecute() }
+    }
+
+    private fun isWindows(): Boolean = System.getProperty("os.name").startsWith("Windows")
 
     private fun isConnectable(socket: File): Boolean {
         if (!socket.exists()) return false
@@ -129,6 +215,50 @@ class DaemonLauncher(
 
         /** Bounded wait after SIGKILL; never hangs respawn even if the process is unkillable. */
         private const val STOP_FORCE_MS: Long = 500
+
+        /** Minimum system Java the daemon runs on — it is Java 21 bytecode and embeds the IntelliJ platform. */
+        const val MIN_JAVA_MAJOR: Int = 21
+
+        /** Bounded wait for `java -version`; a hung probe must never stall daemon startup. */
+        private const val JAVA_PROBE_TIMEOUT_MS: Long = 5_000
+
+        /** The `version "X.Y.Z"` token in a `java -version` banner; compiled once, not per call. */
+        private val VERSION_BANNER = Regex("version \"([^\"]+)\"")
+
+        /**
+         * Runs `java -version` (the banner goes to the merged stderr) and returns its output, or null if
+         * it can't run / exits non-zero / outlives the probe budget. The timeout bounds the WAIT, so it
+         * is checked before draining the stream: `-version` output is tiny (well under the pipe buffer),
+         * so the process exits without blocking on a full pipe, and reading after exit can't hang. Were
+         * the read done first it could block forever on a `java` that emits a banner then holds stdout
+         * open — the timeout would never get a chance to fire.
+         */
+        private fun probeJavaVersion(javaExe: String): String? =
+            try {
+                val proc = ProcessBuilder(javaExe, "-version").redirectErrorStream(true).start()
+                proc.outputStream.close() // it reads no stdin; closing avoids a stuck pipe on either side
+                if (!proc.waitFor(JAVA_PROBE_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    proc.destroyForcibly()
+                    null
+                } else if (proc.exitValue() != 0) {
+                    null
+                } else {
+                    proc.inputStream.bufferedReader().use { it.readText() }
+                }
+            } catch (_: Exception) {
+                null
+            }
+
+        /**
+         * Major version from a `java -version` banner: `"21.0.2"` → 21, legacy `"1.8.0_x"` → 8. Null when
+         * the banner carries no `version "..."` token or its leading component isn't numeric.
+         */
+        internal fun parseJavaMajor(banner: String): Int? {
+            val raw = VERSION_BANNER.find(banner)?.groupValues?.get(1) ?: return null
+            val parts = raw.split('.', '_', '-', '+')
+            val first = parts.getOrNull(0)?.toIntOrNull() ?: return null
+            return if (first == 1) parts.getOrNull(1)?.toIntOrNull() else first
+        }
 
         /**
          * True when [handle]'s command line is recognizably a ktrics daemon (the `ktricsd` launcher

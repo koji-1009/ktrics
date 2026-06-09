@@ -41,9 +41,9 @@ jobs:
           path: '**/build/reports/tests/'
           if-no-files-found: ignore
 
-  # Builds the GraalVM native client + self-contained daemon image (only here and in release.yml; the
-  # verify job never compiles them) so native-build or jlink-module breakage is caught before a release,
-  # not at publish time. Runs on main pushes and manual dispatch, not on PRs, to keep PR CI fast.
+  # Builds the GraalVM native client + daemon installDist image (only here and in release.yml; the
+  # verify job never compiles them) so native-build breakage or a daemon that won't boot on a stock JDK
+  # is caught before a release, not at publish time. Runs on main pushes and manual dispatch, not on PRs.
   native:
     name: native build + smoke (${{ matrix.target }})
     if: github.event_name != 'pull_request'
@@ -58,24 +58,25 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      # GraalVM JDK 25 (native-image toolchain + jmods for jlink). 25 carries a native-image that
-      # locates current Visual Studio; the frozen community 21.0.2 could not find VS 2026.
+      # GraalVM JDK 25 (native-image toolchain for :client:nativeCompile). 25 carries a native-image that
+      # locates current Visual Studio; the frozen community 21.0.2 could not find VS 2026. :daemon:installDist
+      # needs only a JDK 21+ and rides on this one.
       - uses: graalvm/setup-graalvm@329c42c5f4c343bceb505f0b28cc8499bc2bf174 # v1.5.4
         with:
           java-version: '25'
           distribution: 'graalvm-community'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build native client + self-contained daemon image
+      - name: Build native client + daemon image
         shell: bash
-        run: ./gradlew --no-daemon --no-configuration-cache :client:nativeCompile :daemon:runtime
+        run: ./gradlew --no-daemon --no-configuration-cache :client:nativeCompile :daemon:installDist
 
-      # With no system Java, the bundled daemon must boot the embedded platform on its own JRE and
-      # analyze a real file; a missing jlink module crashes here.
-      - name: Smoke test (native client + self-contained daemon)
+      # The daemon must boot the embedded platform on the runner's system Java (GraalVM 25, found via
+      # JAVA_HOME) and analyze a real file; a broken launcher or unresolved module crashes here.
+      - name: Smoke test (native client + daemon on system Java)
         shell: bash
         run: |
           set -euo pipefail
           "client/build/native/nativeCompile/ktrics${{ matrix.exe }}" --version
-          "daemon/build/image/bin/${{ matrix.ktricsd }}" --version
-          "daemon/build/image/bin/${{ matrix.ktricsd }}" analyze --root "$PWD/testdata/analyze"
+          "daemon/build/install/ktricsd/bin/${{ matrix.ktricsd }}" --version
+          "daemon/build/install/ktricsd/bin/${{ matrix.ktricsd }}" analyze --root "$PWD/testdata/analyze"
